@@ -14,6 +14,13 @@ export const config = {
   },
   summarizer: {
     model: process.env.SUMMARIZER_MODEL ?? 'google/gemini-2.5-flash-lite',
+    openrouterModel: process.env.SUMMARIZER_OPENROUTER_MODEL ?? 'google/gemini-2.5-flash-lite',
+  },
+  googleAiStudio: {
+    apiKey: process.env.GOOGLE_AI_STUDIO_API_KEY ?? '',
+    model: process.env.GOOGLE_AI_STUDIO_MODEL ?? 'gemini-2.5-flash-lite',
+    maxPerMinute: 14,
+    maxPerDay: 1450,
   },
   clusterer: {
     url: process.env.CLUSTERER_URL ?? 'http://localhost:8101',

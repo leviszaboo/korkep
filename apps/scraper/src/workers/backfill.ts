@@ -2,7 +2,7 @@ import { isNull, eq, asc } from 'drizzle-orm';
 import { truncateForEmbedding } from '@korkep/shared';
 import { db, schema } from '../lib/db.js';
 import { getEmbeddingsBatch } from '../processors/embedder.js';
-import { analyzeArticle } from '../processors/summarizer.js';
+import { analyzeArticleViaOpenRouter } from '../processors/summarizer.js';
 import { assignStory } from '../processors/clusterer.js';
 import { logger } from '../logger.js';
 
@@ -44,7 +44,7 @@ async function analyzeBatch(rows: BackfillRow[]): Promise<void> {
         running++;
 
         const article = needsAnalysis[i];
-        analyzeArticle(article.title, article.body, article.lead)
+        analyzeArticleViaOpenRouter(article.title, article.body, article.lead)
           .then((result) => {
             if (result) {
               article.summary = result.summary;

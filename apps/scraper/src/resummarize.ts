@@ -1,6 +1,6 @@
 import { eq, gt } from 'drizzle-orm';
 import { db, pool, schema } from './lib/db.js';
-import { analyzeArticle, generateStoryTitle, generateStorySummary } from './processors/summarizer.js';
+import { analyzeArticleViaOpenRouter, generateStoryTitle, generateStorySummary } from './processors/summarizer.js';
 import { logger } from './logger.js';
 
 const CONCURRENCY = 15;
@@ -38,7 +38,7 @@ async function resummarizeArticles() {
         running++;
         const article = articles[i];
 
-        analyzeArticle(article.title, article.body, article.lead)
+        analyzeArticleViaOpenRouter(article.title, article.body, article.lead)
           .then(async (result) => {
             if (result) {
               await db
