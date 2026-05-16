@@ -8,7 +8,7 @@ export function fingerprint(text: string): string {
   return createHash('sha256').update(normalized).digest('hex');
 }
 
-const MAX_BODY_CHARS = 800;
+const MAX_BODY_CHARS = 400;
 const MIN_BODY_CHARS = 150;
 
 const TITLE_PREFIXES = /^(Élő|ÉLŐ|Videó|VIDEÓ|Friss|FRISS|Percről percre|Exkluzív|EXKLUZÍV)\s*:\s*/;
@@ -35,6 +35,8 @@ function cleanBody(body: string): string {
   return cleaned.trim();
 }
 
+export type ArticleTypeForEmbedding = 'event' | 'aggregation' | 'opinion' | 'background';
+
 export interface EmbeddingFields {
   title: string;
   body?: string | null;
@@ -43,6 +45,8 @@ export interface EmbeddingFields {
   lead?: string | null;
   category?: string | null;
   mainEvent?: string | null;
+  storyIdentity?: string | null;
+  articleType?: ArticleTypeForEmbedding | null;
   location?: string | null;
   entities?: string[] | null;
   topics?: string[] | null;
@@ -50,8 +54,22 @@ export interface EmbeddingFields {
 
 export function truncateForEmbedding(fields: EmbeddingFields): string {
   const t = cleanTitle(fields.title);
-
   const parts: string[] = [];
+
+  if (fields.articleType === 'aggregation') {
+    parts.push('[ÖSSZEFOGLALÓ]');
+  }
+
+  // Story identity goes first — most discriminative signal for clustering
+  if (fields.storyIdentity) {
+    parts.push(fields.storyIdentity);
+  }
+
+  if (fields.mainEvent && fields.mainEvent !== fields.storyIdentity) {
+    parts.push(fields.mainEvent);
+  }
+
+  parts.push(t);
 
   if (fields.publishedAt) {
     const d = typeof fields.publishedAt === 'string' ? new Date(fields.publishedAt) : fields.publishedAt;
@@ -60,24 +78,8 @@ export function truncateForEmbedding(fields: EmbeddingFields): string {
     }
   }
 
-  if (fields.topics?.length) {
-    parts.push(`[${fields.topics.join(', ')}]`);
-  } else if (fields.category) {
-    parts.push(`[${fields.category}]`);
-  }
-
-  parts.push(`${t}.`);
-
-  if (fields.mainEvent) {
-    parts.push(`Event: ${fields.mainEvent}`);
-  }
-
-  if (fields.location) {
-    parts.push(`Location: ${fields.location}`);
-  }
-
   if (fields.entities?.length) {
-    parts.push(`Entities: ${fields.entities.join(', ')}`);
+    parts.push(`Szereplők: ${fields.entities.join(', ')}`);
   }
 
   if (fields.summary && fields.summary.length >= MIN_BODY_CHARS) {
@@ -90,6 +92,11 @@ export function truncateForEmbedding(fields: EmbeddingFields): string {
     if (cleaned.length >= MIN_BODY_CHARS) {
       parts.push(cleaned.slice(0, MAX_BODY_CHARS));
     }
+  }
+
+  // Repeat storyIdentity at end — embedding models weight both ends heavily
+  if (fields.storyIdentity) {
+    parts.push(fields.storyIdentity);
   }
 
   return parts.join(' | ');

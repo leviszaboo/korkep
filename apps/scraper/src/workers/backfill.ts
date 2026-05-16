@@ -17,6 +17,8 @@ interface BackfillRow {
   lead: string | null;
   summary: string | null;
   mainEvent: string | null;
+  storyIdentity: string | null;
+  articleType: string | null;
   location: string | null;
   entities: string[] | null;
   topics: string[] | null;
@@ -49,6 +51,8 @@ async function analyzeBatch(rows: BackfillRow[]): Promise<void> {
             if (result) {
               article.summary = result.summary;
               article.mainEvent = result.mainEvent;
+              article.storyIdentity = result.storyIdentity;
+              article.articleType = result.articleType;
               article.location = result.location;
               article.entities = result.entities.length > 0 ? result.entities : null;
               article.topics = result.topics.length > 0 ? result.topics : null;
@@ -57,6 +61,8 @@ async function analyzeBatch(rows: BackfillRow[]): Promise<void> {
                 .set({
                   summary: result.summary,
                   mainEvent: result.mainEvent,
+                  storyIdentity: result.storyIdentity,
+                  articleType: result.articleType,
                   location: result.location,
                   entities: article.entities,
                   topics: article.topics,
@@ -114,10 +120,12 @@ async function processArticles(
                     const article = rows[i];
                     const embedding = embeddings[i];
                     let storyId: number | null = null;
-                    try {
-                        storyId = await assignStory(article.title, embedding, article.sourceId);
-                    } catch (err) {
-                        logger.error({ err, url: article.url }, 'Clustering failed during backfill');
+                    if (article.articleType !== 'aggregation') {
+                      try {
+                          storyId = await assignStory(article.title, embedding, article.sourceId);
+                      } catch (err) {
+                          logger.error({ err, url: article.url }, 'Clustering failed during backfill');
+                      }
                     }
                     await db
                         .update(schema.articles)
@@ -174,6 +182,8 @@ export async function runBackfill() {
                 lead: schema.articles.lead,
                 summary: schema.articles.summary,
                 mainEvent: schema.articles.mainEvent,
+                storyIdentity: schema.articles.storyIdentity,
+                articleType: schema.articles.articleType,
                 location: schema.articles.location,
                 entities: schema.articles.entities,
                 topics: schema.articles.topics,
@@ -202,6 +212,8 @@ export async function runBackfill() {
             lead: a.lead,
             category: a.category,
             mainEvent: a.mainEvent,
+            storyIdentity: a.storyIdentity,
+            articleType: a.articleType as any,
             location: a.location,
             entities: a.entities,
             topics: a.topics,

@@ -135,7 +135,7 @@ def recluster(
             min_cluster_size=min_cluster_size,
             min_samples=2,
             metric="precomputed",
-            cluster_selection_epsilon=0.15,
+            cluster_selection_epsilon=0.12,
         )
         labels = clusterer.fit_predict(dist_matrix)
     else:
@@ -151,7 +151,7 @@ def recluster(
             min_cluster_size=min_cluster_size,
             min_samples=2,
             metric="precomputed",
-            cluster_selection_epsilon=0.15,
+            cluster_selection_epsilon=0.12,
         )
         labels = clusterer.fit_predict(dist_matrix)
 

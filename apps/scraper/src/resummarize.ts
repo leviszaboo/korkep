@@ -46,6 +46,8 @@ async function resummarizeArticles() {
                 .set({
                   summary: result.summary,
                   mainEvent: result.mainEvent,
+                  storyIdentity: result.storyIdentity,
+                  articleType: result.articleType,
                   location: result.location,
                   entities: result.entities.length > 0 ? result.entities : null,
                   topics: result.topics.length > 0 ? result.topics : null,

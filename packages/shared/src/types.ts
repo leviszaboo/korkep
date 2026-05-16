@@ -12,10 +12,14 @@ export interface Source {
   createdAt: Date;
 }
 
+export type ArticleType = 'event' | 'aggregation' | 'opinion' | 'background';
+
 export interface ArticleAnalysis {
   summary: string;
   headline: string;
   mainEvent: string;
+  storyIdentity: string;
+  articleType: ArticleType;
   location: string | null;
   entities: string[];
   topics: string[];

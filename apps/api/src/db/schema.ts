@@ -80,6 +80,8 @@ export const articles = pgTable(
     lead: text('lead'),
     summary: text('summary'),
     mainEvent: text('main_event'),
+    storyIdentity: text('story_identity'),
+    articleType: text('article_type'),
     location: text('location'),
     entities: text('entities').array(),
     topics: text('topics').array(),

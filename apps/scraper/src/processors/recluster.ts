@@ -57,13 +57,15 @@ export async function runRecluster() {
       topics: schema.articles.topics,
       sourceId: schema.articles.sourceId,
       embedding: schema.articles.embedding,
+      articleType: schema.articles.articleType,
       publishedAt: schema.articles.publishedAt,
       createdAt: schema.articles.createdAt,
     })
     .from(schema.articles)
     .where(gt(schema.articles.createdAt, cutoff));
 
-  const withEmbeddings = articles.filter((a) => a.embedding != null);
+  // Exclude aggregation articles from clustering — they span multiple stories
+  const withEmbeddings = articles.filter((a) => a.embedding != null && a.articleType !== 'aggregation');
 
   if (withEmbeddings.length < 2) {
     logger.info('Not enough articles with embeddings to recluster');
@@ -147,83 +149,125 @@ export async function runRecluster() {
   await db.update(schema.articles).set({ storyId: null });
   await db.delete(schema.stories);
 
+  // Prepare all cluster metadata
+  interface ClusterData {
+    articleIds: number[];
+    sourceIds: Set<number>;
+    biasGroups: Set<string>;
+    firstSeenAt: Date;
+    relevanceScore: number;
+    storyTopics: string[];
+    clusterFingerprint: string;
+    clusterArticles: typeof withEmbeddings;
+  }
+
+  const clusters: ClusterData[] = [];
   for (const [, articleIds] of clusterGroups) {
     const clusterArticles = articleIds.map((id) => articleMap.get(id)!);
     const sourceIds = new Set(clusterArticles.map((a) => a.sourceId));
     const biasGroups = new Set(
       [...sourceIds].map((sid) => normalizeBiasGroup(sourceBiasMap.get(sid) ?? 'center')),
     );
-
     const firstSeenAt = clusterArticles.reduce((earliest, a) => {
       const ts = a.publishedAt ?? a.createdAt;
       return ts < earliest ? ts : earliest;
     }, clusterArticles[0].publishedAt ?? clusterArticles[0].createdAt);
-
-    const relevanceScore = computeRelevanceScore(
-      sourceIds.size,
-      articleIds.length,
-      biasGroups.size,
-    );
-
-    // Check if this exact cluster existed before — skip LLM calls if so
+    const relevanceScore = computeRelevanceScore(sourceIds.size, articleIds.length, biasGroups.size);
+    const storyTopics = aggregateTopics(clusterArticles.map((a) => a.topics));
     const clusterFingerprint = articleIds.slice().sort((a, b) => a - b).join(',');
-    const cached = storyFingerprints.get(clusterFingerprint);
 
-    let storyTitle: string;
-    let storySummary: string | null;
+    clusters.push({ articleIds, sourceIds, biasGroups, firstSeenAt, relevanceScore, storyTopics, clusterFingerprint, clusterArticles });
+  }
 
-    if (cached) {
-      storyTitle = cached.title;
-      storySummary = cached.summary;
-      logger.info({ storyTitle, articleCount: articleIds.length }, 'Reused cached story title/summary');
-    } else {
-      const articleTitles = clusterArticles.map((a) => a.title);
-      storyTitle = clusterArticles[0].title;
-      if (articleIds.length >= 2) {
-        const generatedTitle = await generateStoryTitle(articleTitles);
-        if (generatedTitle) {
-          storyTitle = generatedTitle;
-          logger.info({ storyTitle, articleCount: articleIds.length }, 'Generated story title');
-        } else {
-          logger.warn({ fallbackTitle: storyTitle, articleCount: articleIds.length }, 'Story title generation returned null, using first article title');
-        }
-      }
+  // Generate titles and summaries in parallel via OpenRouter
+  const LLM_CONCURRENCY = 15;
+  const storyResults: Array<{ title: string; summary: string | null }> = new Array(clusters.length);
 
-      const articleSummaries = clusterArticles
-        .map((a) => a.summary)
-        .filter((s): s is string => s != null);
-      storySummary = await generateStorySummary(articleSummaries, storyTitle);
-      if (storySummary) {
-        logger.info({ storyTitle, summaryLength: storySummary.length }, 'Generated story summary');
-      } else {
-        logger.warn({ storyTitle }, 'Story summary generation returned null');
+  let running = 0;
+  let next = 0;
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+
+    function launch() {
+      while (running < LLM_CONCURRENCY && next < clusters.length) {
+        const idx = next++;
+        running++;
+        const cluster = clusters[idx];
+
+        (async () => {
+          const cached = storyFingerprints.get(cluster.clusterFingerprint);
+          if (cached) {
+            storyResults[idx] = { title: cached.title, summary: cached.summary };
+            logger.info({ storyTitle: cached.title, articleCount: cluster.articleIds.length }, 'Reused cached story title/summary');
+            return;
+          }
+
+          const articleTitles = cluster.clusterArticles.map((a) => a.title);
+          let storyTitle = cluster.clusterArticles[0].title;
+          if (cluster.articleIds.length >= 2) {
+            const generatedTitle = await generateStoryTitle(articleTitles);
+            if (generatedTitle) {
+              storyTitle = generatedTitle;
+              logger.info({ storyTitle, articleCount: cluster.articleIds.length }, 'Generated story title');
+            }
+          }
+
+          const articleSummaries = cluster.clusterArticles
+            .map((a) => a.summary)
+            .filter((s): s is string => s != null);
+          const storySummary = await generateStorySummary(articleSummaries, storyTitle);
+
+          storyResults[idx] = { title: storyTitle, summary: storySummary };
+        })()
+          .catch((err) => {
+            logger.error({ err, articleCount: cluster.articleIds.length }, 'Story title/summary generation failed');
+            storyResults[idx] = { title: cluster.clusterArticles[0].title, summary: null };
+          })
+          .finally(() => {
+            running--;
+            if (next >= clusters.length && running === 0 && !settled) {
+              settled = true;
+              resolve();
+            } else {
+              launch();
+            }
+          });
       }
     }
 
-    // Aggregate topics from articles (majority vote)
-    const storyTopics = aggregateTopics(clusterArticles.map((a) => a.topics));
+    launch();
+    if (clusters.length === 0 && !settled) { settled = true; resolve(); }
+  });
+
+  logger.info({ total: clusters.length }, 'Story title/summary generation complete');
+
+  // Write all stories and assign articles to DB
+  for (let i = 0; i < clusters.length; i++) {
+    const cluster = clusters[i];
+    const { title, summary } = storyResults[i];
 
     const [newStory] = await db
       .insert(schema.stories)
       .values({
-        title: storyTitle,
-        summary: storySummary,
-        topics: storyTopics.length > 0 ? storyTopics : null,
-        articleCount: articleIds.length,
-        sourceCount: sourceIds.size,
-        relevanceScore,
-        firstSeenAt,
+        title,
+        summary,
+        topics: cluster.storyTopics.length > 0 ? cluster.storyTopics : null,
+        articleCount: cluster.articleIds.length,
+        sourceCount: cluster.sourceIds.size,
+        relevanceScore: cluster.relevanceScore,
+        firstSeenAt: cluster.firstSeenAt,
       })
       .returning({ id: schema.stories.id });
 
     await db
       .update(schema.articles)
       .set({ storyId: newStory.id })
-      .where(inArray(schema.articles.id, articleIds));
+      .where(inArray(schema.articles.id, cluster.articleIds));
   }
 
   logger.info(
-    { stories: clusterGroups.size, articles: withEmbeddings.length },
+    { stories: clusters.length, articles: withEmbeddings.length },
     'Recluster complete',
   );
 }

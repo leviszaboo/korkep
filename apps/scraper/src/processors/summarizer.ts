@@ -86,17 +86,32 @@ const MAX_INPUT_CHARS = 2000;
 
 const TOPICS_LIST = TOPICS.join(', ');
 
-const SYSTEM_PROMPT = `Egy magyar hírösszefoglaló és -elemző rendszer vagy. A feladatod a cikk strukturált elemzése.
+const SYSTEM_PROMPT = `Egy magyar hírösszefoglaló és -elemző rendszer vagy. A feladatod a cikk strukturált elemzése KLASZTEREZÉS céljából.
 
 Válaszolj KIZÁRÓLAG az alábbi JSON formátumban, semmilyen más szöveget ne írj:
 {
   "summary": "2-3 mondatos tömör, tényszerű, semleges összefoglaló (max 150 szó)",
   "headline": "Semleges, forrásfüggetlen főcím (max 15 szó)",
   "mainEvent": "Egy mondatban: mi történt / miről szól a cikk",
+  "storyIdentity": "Egy mondat, ami EGYÉRTELMŰEN azonosítja ezt a konkrét történetet (lásd szabályok lent)",
+  "articleType": "event | aggregation | opinion | background",
   "location": "Helyszín (város/ország/régió) vagy null ha nem releváns",
   "entities": ["Legfontosabb személyek, szervezetek, intézmények (max 5)"],
   "topics": ["Témakörök az alábbi listából (1-3): ${TOPICS_LIST}"]
 }
+
+SZABÁLYOK a storyIdentity mezőhöz:
+- Célja: két cikk CSAK AKKOR tartozik egy story-ba, ha a storyIdentity-jük lényegében ugyanazt mondja
+- Fogalmazd meg a KONKRÉT cselekvést/eseményt/döntést, ne csak a helyszínt vagy szereplőket
+- Példa: "Magyar Péter kordont bontott tiltakozásképpen a Karmelita előtt" vs "A kormány hétvégére megnyitja a Karmelita épületét látogatóknak" — ezek KÉT KÜLÖNBÖZŐ story
+- Példa: "Orbán beszédet mondott a parlamentben a költségvetésről" vs "Orbán találkozott Zelenszkijjel Kijevben" — ezek KÉT KÜLÖNBÖZŐ story
+- Ha a cikk több különálló eseményt foglal össze (napi összefoglaló, percről percre), az articleType legyen "aggregation"
+
+articleType értékek:
+- "event": egy konkrét eseményről/hírről szól
+- "aggregation": több eseményt összefoglal (napi összefoglaló, hírfolyam, percről percre, élő közvetítés)
+- "opinion": vélemény, publicisztika, szerkesztőségi álláspont
+- "background": háttérelemzés, magyarázó cikk, amely nem egy konkrét új eseményről szól
 
 A topics mező KIZÁRÓLAG az alábbi értékeket tartalmazhatja: ${TOPICS_LIST}`;
 
@@ -257,6 +272,8 @@ async function callOpenRouterChat(
 
 const VALID_TOPICS = new Set<string>(TOPICS);
 
+const VALID_ARTICLE_TYPES = new Set(['event', 'aggregation', 'opinion', 'background']);
+
 function parseAnalysisResponse(raw: string): ArticleAnalysis {
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
@@ -276,10 +293,16 @@ function parseAnalysisResponse(raw: string): ArticleAnalysis {
     ? parsed.topics.map(String).filter((t: string) => VALID_TOPICS.has(t)).slice(0, 3)
     : [];
 
+  const articleType = VALID_ARTICLE_TYPES.has(parsed.articleType)
+    ? (parsed.articleType as ArticleAnalysis['articleType'])
+    : 'event';
+
   return {
     summary: String(parsed.summary).trim(),
     headline: String(parsed.headline).trim(),
     mainEvent: String(parsed.mainEvent).trim(),
+    storyIdentity: parsed.storyIdentity ? String(parsed.storyIdentity).trim() : String(parsed.mainEvent).trim(),
+    articleType,
     location: parsed.location ? String(parsed.location).trim() : null,
     entities,
     topics,

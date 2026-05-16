@@ -57,6 +57,13 @@
       "when": 1779307200000,
       "tag": "0007_add_structured_nlp_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1779393600000,
+      "tag": "0008_add_story_identity_fields",
+      "breakpoints": true
     }
   ]
 }

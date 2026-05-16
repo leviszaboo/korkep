@@ -73,8 +73,10 @@ export async function getStories(page: number, limit: number, topic?: string, so
       db.execute<{ story_id: number; image_url: string }>(sql`
         SELECT DISTINCT ON (a.story_id) a.story_id, a.image_url
         FROM articles a
+        JOIN sources s ON s.id = a.source_id
         WHERE a.story_id IN (${sql.raw(storyIds.join(','))})
           AND a.image_url IS NOT NULL
+          AND s.slug != '24hu'
         ORDER BY a.story_id, a.published_at DESC NULLS LAST
       `),
       db.execute<{
@@ -228,7 +230,7 @@ export async function searchStories(query: string) {
       st.source_count,
       st.article_count,
       MAX(a.published_at)::text AS latest_published_at,
-      (SELECT a2.image_url FROM articles a2 WHERE a2.story_id = a.story_id AND a2.image_url IS NOT NULL ORDER BY a2.published_at DESC NULLS LAST LIMIT 1) AS image_url,
+      (SELECT a2.image_url FROM articles a2 JOIN sources s2 ON s2.id = a2.source_id WHERE a2.story_id = a.story_id AND a2.image_url IS NOT NULL AND s2.slug != '24hu' ORDER BY a2.published_at DESC NULLS LAST LIMIT 1) AS image_url,
       COUNT(a.id)::text AS matched_articles,
       MAX(ts_rank(a.search_vector, plainto_tsquery('simple', ${query}))) AS relevance_score
     FROM articles a
@@ -263,7 +265,7 @@ export async function searchStories(query: string) {
         st.source_count,
         st.article_count,
         MAX(a.published_at)::text AS latest_published_at,
-        (SELECT a2.image_url FROM articles a2 WHERE a2.story_id = a.story_id AND a2.image_url IS NOT NULL ORDER BY a2.published_at DESC NULLS LAST LIMIT 1) AS image_url,
+        (SELECT a2.image_url FROM articles a2 JOIN sources s2 ON s2.id = a2.source_id WHERE a2.story_id = a.story_id AND a2.image_url IS NOT NULL AND s2.slug != '24hu' ORDER BY a2.published_at DESC NULLS LAST LIMIT 1) AS image_url,
         COUNT(a.id)::text AS matched_articles,
         1.0 AS relevance_score
       FROM articles a

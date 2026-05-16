@@ -46,6 +46,8 @@ export function startProcessWorker() {
       let summary: string | null = null;
       let headline: string | null = null;
       let mainEvent: string | null = null;
+      let storyIdentity: string | null = null;
+      let articleType: string | null = null;
       let location: string | null = null;
       let entities: string[] | null = null;
       let topics: string[] | null = null;
@@ -60,6 +62,8 @@ export function startProcessWorker() {
           summary = analysis.summary;
           headline = analysis.headline;
           mainEvent = analysis.mainEvent;
+          storyIdentity = analysis.storyIdentity;
+          articleType = analysis.articleType;
           location = analysis.location;
           entities = analysis.entities.length > 0 ? analysis.entities : null;
           topics = analysis.topics.length > 0 ? analysis.topics : null;
@@ -77,6 +81,8 @@ export function startProcessWorker() {
         lead: raw.lead,
         category: raw.category,
         mainEvent,
+        storyIdentity,
+        articleType: articleType as any,
         location,
         entities,
         topics,
@@ -88,9 +94,9 @@ export function startProcessWorker() {
         logger.error({ err, url: raw.url }, 'Embedding failed, storing without');
       }
 
-      // Step 3: Assign to story cluster
+      // Step 3: Assign to story cluster (skip aggregation articles)
       let storyId: number | null = null;
-      if (embedding) {
+      if (embedding && articleType !== 'aggregation') {
         try {
           storyId = await assignStory(headline ?? raw.title, embedding, sourceId);
         } catch (err) {
@@ -107,6 +113,8 @@ export function startProcessWorker() {
         lead: raw.lead ?? null,
         summary,
         mainEvent,
+        storyIdentity,
+        articleType,
         location,
         entities,
         topics,
