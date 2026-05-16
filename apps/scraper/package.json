@@ -1,0 +1,31 @@
+{
+  "name": "@korkep/scraper",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@korkep/api": "workspace:*",
+    "@korkep/shared": "workspace:*",
+    "bullmq": "^5.76.0",
+    "cheerio": "^1.2.0",
+    "dotenv": "^17.4.0",
+    "drizzle-orm": "^0.45.0",
+    "ioredis": "^5.10.0",
+    "pg": "^8.20.0",
+    "pino": "^10.3.0",
+    "pino-pretty": "^13.1.3",
+    "rss-parser": "^3.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.22.0",
+    "typescript": "^6.0.0"
+  }
+}

@@ -1,0 +1,132 @@
+@import "tailwindcss";
+
+:root {
+  --base: oklch(0.98 0.005 60);
+  --surface: oklch(0.955 0.004 60);
+  --elevated: oklch(0.92 0.003 60);
+  --inverse: oklch(0.18 0.01 250);
+
+  --fg: oklch(0.20 0.015 250);
+  --muted: oklch(0.48 0.01 250);
+  --faint: oklch(0.62 0.008 250);
+
+  --bd: oklch(0.90 0.005 60);
+  --bd-strong: oklch(0.82 0.005 60);
+  --bd-focus: oklch(0.55 0.08 30);
+
+  --ac: oklch(0.58 0.14 30);
+  --ac-hover: oklch(0.52 0.14 30);
+  --ac-muted: oklch(0.93 0.03 30);
+
+  --bias-l: oklch(0.58 0.15 250);
+  --bias-c: oklch(0.55 0.1 165);
+  --bias-r: oklch(0.58 0.15 40);
+  --bias-l-bg: oklch(0.94 0.03 250);
+  --bias-c-bg: oklch(0.94 0.025 165);
+  --bias-r-bg: oklch(0.94 0.03 40);
+
+  --fresh-val: oklch(0.55 0.12 165);
+  --fresh-bg-val: oklch(0.94 0.03 165);
+
+  --sh-sm: 0 1px 3px oklch(0.2 0.01 250 / 0.06);
+  --sh-md: 0 2px 8px oklch(0.2 0.01 250 / 0.08);
+  --sh-lg: 0 4px 20px oklch(0.2 0.01 250 / 0.10);
+}
+
+[data-theme="dark"] {
+  --base: oklch(0.14 0.008 260);
+  --surface: oklch(0.18 0.008 260);
+  --elevated: oklch(0.22 0.008 260);
+  --inverse: oklch(0.94 0.005 60);
+
+  --fg: oklch(0.91 0.005 70);
+  --muted: oklch(0.62 0.008 250);
+  --faint: oklch(0.44 0.008 250);
+
+  --bd: oklch(0.25 0.006 260);
+  --bd-strong: oklch(0.33 0.006 260);
+  --bd-focus: oklch(0.62 0.10 30);
+
+  --ac: oklch(0.65 0.14 30);
+  --ac-hover: oklch(0.72 0.13 30);
+  --ac-muted: oklch(0.24 0.04 30);
+
+  --bias-l: oklch(0.65 0.14 250);
+  --bias-c: oklch(0.62 0.1 165);
+  --bias-r: oklch(0.65 0.14 40);
+  --bias-l-bg: oklch(0.22 0.04 250);
+  --bias-c-bg: oklch(0.22 0.03 165);
+  --bias-r-bg: oklch(0.22 0.04 40);
+
+  --fresh-val: oklch(0.62 0.12 165);
+  --fresh-bg-val: oklch(0.22 0.04 165);
+
+  --sh-sm: 0 1px 3px oklch(0 0 0 / 0.25);
+  --sh-md: 0 2px 8px oklch(0 0 0 / 0.35);
+  --sh-lg: 0 4px 20px oklch(0 0 0 / 0.45);
+}
+
+@theme {
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+
+  --color-base: var(--base);
+  --color-surface: var(--surface);
+  --color-elevated: var(--elevated);
+  --color-inverse: var(--inverse);
+
+  --color-foreground: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+
+  --color-border: var(--bd);
+  --color-border-strong: var(--bd-strong);
+  --color-border-focus: var(--bd-focus);
+
+  --color-accent: var(--ac);
+  --color-accent-hover: var(--ac-hover);
+  --color-accent-muted: var(--ac-muted);
+
+  --color-bias-left: var(--bias-l);
+  --color-bias-center: var(--bias-c);
+  --color-bias-right: var(--bias-r);
+  --color-bias-left-bg: var(--bias-l-bg);
+  --color-bias-center-bg: var(--bias-c-bg);
+  --color-bias-right-bg: var(--bias-r-bg);
+
+  --color-fresh: var(--fresh-val);
+  --color-fresh-bg: var(--fresh-bg-val);
+
+  --shadow-sm: var(--sh-sm);
+  --shadow-md: var(--sh-md);
+  --shadow-lg: var(--sh-lg);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+}
+
+html {
+  background-color: var(--base);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-sans);
+  line-height: 1.6;
+}
+
+::selection {
+  background-color: var(--ac-muted);
+  color: var(--fg);
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}

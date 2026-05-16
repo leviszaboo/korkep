@@ -1,0 +1,62 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1778796969863,
+      "tag": "0000_numerous_dazzler",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778826823328,
+      "tag": "0001_needy_the_leader",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778875200000,
+      "tag": "0002_upgrade_embeddings",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778961600000,
+      "tag": "0003_add_relevance_score",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779048000000,
+      "tag": "0004_add_search_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779134400000,
+      "tag": "0005_switch_to_qwen3_embeddings",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779220800000,
+      "tag": "0006_add_article_nlp_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1779307200000,
+      "tag": "0007_add_structured_nlp_fields",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+node_modules
+dist
+.next
+.turbo
+*.tsbuildinfo
+.env
+.env.local
+.git
+.gitignore
+*.md
+*.log
+.DS_Store
+.idea
+.vscode
+__pycache__
+*.pyc
+.venv

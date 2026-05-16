@@ -1,0 +1,171 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: korkep
+      POSTGRES_PASSWORD: korkep
+      POSTGRES_DB: korkep
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U korkep"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  clusterer:
+    build: ./apps/clusterer
+    ports:
+      - "8101:8101"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8101/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep
+      CORS_ORIGIN: http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  scraper:
+    build:
+      context: .
+      dockerfile: apps/scraper/Dockerfile
+    environment:
+      DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep
+      REDIS_URL: redis://redis:6379
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      CLUSTERER_URL: http://clusterer:8101
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clusterer:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      API_URL: http://api:3001
+    depends_on:
+      api:
+        condition: service_healthy
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["node", "dist/db/migrate.js"]
+    environment:
+      DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    profiles:
+      - setup
+
+
+  recluster:
+    build:
+      context: .
+      dockerfile: apps/scraper/Dockerfile
+    command: ["node", "dist/recluster.js"]
+    environment:
+      DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      CLUSTERER_URL: http://clusterer:8101
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clusterer:
+        condition: service_healthy
+    restart: "no"
+    profiles:
+      - recluster
+
+  reembed:
+    build:
+      context: .
+      dockerfile: apps/scraper/Dockerfile
+    command: ["node", "dist/reembed.js"]
+    environment:
+      DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    profiles:
+      - reembed
+
+  resummarize:
+    build:
+      context: .
+      dockerfile: apps/scraper/Dockerfile
+    command: ["node", "dist/resummarize.js"]
+    environment:
+      DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      SINCE_HOURS: ${SINCE_HOURS:-24}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    profiles:
+      - resummarize
+
+  diagnostics:
+    build:
+      context: .
+      dockerfile: apps/scraper/Dockerfile
+    command: ["node", "dist/diagnostics.js"]
+    environment:
+      DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep
+      REDIS_URL: redis://redis:6379
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    profiles:
+      - recluster
+
+volumes:
+  pgdata:
+  redisdata:

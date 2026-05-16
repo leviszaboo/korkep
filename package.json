@@ -1,0 +1,22 @@
+{
+  "name": "korkep",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test:integration": "./tests/integration.sh",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:migrate": "docker compose run --rm migrate"
+  },
+  "devDependencies": {
+    "turbo": "^2.9.0",
+    "typescript": "^6.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "msgpackr-extract"]
+  },
+  "packageManager": "pnpm@10.11.0"
+}

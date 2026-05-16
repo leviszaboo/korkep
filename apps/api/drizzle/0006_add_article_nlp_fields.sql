@@ -1,0 +1,3 @@
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS lead text;
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS summary text;
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS category text;
