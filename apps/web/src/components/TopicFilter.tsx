@@ -1,7 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { useFilter } from './FilterContext';
+import { DateFilter } from './DateFilter';
 
 const topics = [
   { key: 'politika', label: 'politika' },
@@ -33,53 +34,59 @@ const topicIcons: Record<string, React.ReactNode> = {
 
 export function TopicFilter() {
   const searchParams = useSearchParams();
-  const activeTopic = searchParams.get('topic');
-  const sort = searchParams.get('sort');
-  const since = searchParams.get('since');
+  const { optimisticTopic, navigate } = useFilter();
 
-  function buildHref(topicKey?: string) {
-    const params = new URLSearchParams();
-    if (topicKey) params.set('topic', topicKey);
-    if (sort) params.set('sort', sort);
-    if (since) params.set('since', since);
+  function handleClick(topicKey?: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (topicKey) {
+      params.set('topic', topicKey);
+    } else {
+      params.delete('topic');
+    }
+    params.delete('page');
     const qs = params.toString();
-    return qs ? `/?${qs}` : '/';
+    const href = qs ? `/?${qs}` : '/';
+    navigate(href, { topic: topicKey ?? null });
   }
 
   return (
-    <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-      <FilterPill href={buildHref()} active={!activeTopic} icon={<GridIcon />}>
-        All
-      </FilterPill>
-      {topics.map((topic) => (
-        <FilterPill
-          key={topic.key}
-          href={buildHref(topic.key)}
-          active={activeTopic === topic.key}
-          icon={topicIcons[topic.key]}
-        >
-          {topic.label}
+    <div className="flex items-center gap-3">
+      <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto scrollbar-none">
+        <FilterPill onClick={() => handleClick()} active={!optimisticTopic} icon={<GridIcon />}>
+          All
         </FilterPill>
-      ))}
+        {topics.map((topic) => (
+          <FilterPill
+            key={topic.key}
+            onClick={() => handleClick(topic.key)}
+            active={optimisticTopic === topic.key}
+            icon={topicIcons[topic.key]}
+          >
+            {topic.label}
+          </FilterPill>
+        ))}
+      </div>
+      <div className="h-5 w-px shrink-0 bg-border" />
+      <DateFilter />
     </div>
   );
 }
 
 function FilterPill({
-  href,
+  onClick,
   active,
   icon,
   children,
 }: {
-  href: string;
+  onClick: () => void;
   active: boolean;
   icon: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <Link
-      href={href}
-      className={`flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm capitalize transition-colors ${
+    <button
+      onClick={onClick}
+      className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm capitalize transition-colors ${
         active
           ? 'bg-foreground text-base font-medium'
           : 'bg-surface text-muted hover:text-foreground'
@@ -87,7 +94,7 @@ function FilterPill({
     >
       {icon}
       {children}
-    </Link>
+    </button>
   );
 }
 

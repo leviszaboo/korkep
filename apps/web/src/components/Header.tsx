@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter, usePathname } from 'next/navigation';
-import { useRef, useState } from 'react';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import { useRef, useState, useEffect } from 'react';
+import { TulipLogo } from './FolkPattern';
 
 const navItems = [
   { href: '/', label: 'Stories', icon: NewspaperIcon },
@@ -12,11 +13,20 @@ const navItems = [
 export function Header() {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const isSearchPage = pathname === '/search';
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+  const urlQuery = searchParams.get('q') ?? '';
+  useEffect(() => {
+    if (isSearchPage && urlQuery) {
+      setSearchOpen(true);
+      setQuery(urlQuery);
+    }
+  }, [isSearchPage, urlQuery]);
 
   const showSearch = searchOpen || isSearchPage;
 
@@ -50,14 +60,16 @@ export function Header() {
   }
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-base/80 backdrop-blur-md">
+    <header className="sticky top-0 z-50 border-b-2 border-foreground bg-base/80 backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-[1400px] items-center justify-between px-4 sm:px-6">
         <Link href="/" className="flex shrink-0 items-center gap-2.5">
-          <FlowerLogo />
-          <span className="text-lg font-semibold tracking-tight text-foreground">
+          <TulipLogo />
+          <span className="text-lg font-bold tracking-tight text-foreground">
             Körkép
           </span>
         </Link>
+
+        <HeaderInfo />
 
         <div className="flex items-center gap-1">
           {showSearch ? (
@@ -88,10 +100,10 @@ export function Header() {
                     <Link
                       key={item.href}
                       href={item.href}
-                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors ${
+                      className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${
                         active
-                          ? 'text-foreground bg-surface font-medium'
-                          : 'text-muted hover:text-foreground hover:bg-surface'
+                          ? 'text-foreground font-semibold'
+                          : 'text-muted hover:text-foreground'
                       }`}
                     >
                       <item.icon />
@@ -101,13 +113,13 @@ export function Header() {
                 })}
                 <button
                   onClick={openSearch}
-                  className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted transition-colors hover:text-foreground hover:bg-surface"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted transition-colors hover:text-foreground"
                 >
                   <SearchNavIcon />
                   <span className="hidden sm:inline">Search</span>
                 </button>
               </nav>
-              <div className="ml-1 border-l border-border pl-1">
+              <div className="ml-2 border-l border-border pl-2">
                 <ThemeToggleInline />
               </div>
             </>
@@ -118,13 +130,77 @@ export function Header() {
   );
 }
 
+function HeaderInfo() {
+  const [time, setTime] = useState('');
+  const [rates, setRates] = useState<{ eur: string; usd: string; chf: string } | null>(null);
+
+  useEffect(() => {
+    function tick() {
+      const now = new Date();
+      setTime(now.toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' }));
+    }
+    tick();
+    const id = setInterval(tick, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    async function fetchRates() {
+      try {
+        const res = await fetch('https://api.exchangerate-api.com/v4/latest/HUF');
+        if (!res.ok) return;
+        const data = await res.json();
+        setRates({
+          eur: (1 / data.rates.EUR).toFixed(1),
+          usd: (1 / data.rates.USD).toFixed(1),
+          chf: (1 / data.rates.CHF).toFixed(1),
+        });
+      } catch {}
+    }
+    fetchRates();
+  }, []);
+
+  const dateStr = new Date().toLocaleDateString('hu-HU', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+  });
+
+  return (
+    <div className="hidden items-center gap-3 text-xs text-muted md:flex">
+      <span>{dateStr}</span>
+      {time && <span>{time}</span>}
+      {rates && (
+        <>
+          <span className="h-3 w-px bg-border" />
+          <span>EUR/HUF {rates.eur}</span>
+          <span>USD/HUF {rates.usd}</span>
+          <span>CHF/HUF {rates.chf}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ThemeToggleInline() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [dark, setDark] = useState<boolean | null>(null);
 
-  if (dark === null) {
-    if (typeof document !== 'undefined') {
+  useEffect(() => {
+    const themeParam = searchParams.get('theme');
+    if (themeParam === 'dark' || themeParam === 'light') {
+      document.documentElement.dataset.theme = themeParam;
+      localStorage.setItem('theme', themeParam);
+      setDark(themeParam === 'dark');
+    } else {
       setDark(document.documentElement.dataset.theme === 'dark');
     }
+  }, [searchParams]);
+
+  if (dark === null) {
     return <span className="block size-[18px]" />;
   }
 
@@ -133,45 +209,19 @@ function ThemeToggleInline() {
     setDark(next);
     document.documentElement.dataset.theme = next ? 'dark' : 'light';
     localStorage.setItem('theme', next ? 'dark' : 'light');
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('theme', next ? 'dark' : 'light');
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }
 
   return (
     <button
       onClick={toggle}
       aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-      className="rounded-md p-2 text-muted transition-colors hover:text-foreground hover:bg-surface"
+      className="p-2 text-muted transition-colors hover:text-foreground"
     >
       {dark ? <SunIcon /> : <MoonIcon />}
     </button>
-  );
-}
-
-function FlowerLogo() {
-  return (
-    <svg width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <g transform="translate(16,16)">
-        {[0, 60, 120, 180, 240, 300].map((a) => (
-          <path
-            key={`o${a}`}
-            d="M0,-4 C3.5,-6.5 3.5,-11 0,-14 C-3.5,-11 -3.5,-6.5 0,-4Z"
-            className="fill-accent"
-            opacity={0.8}
-            transform={`rotate(${a})`}
-          />
-        ))}
-        {[30, 90, 150, 210, 270, 330].map((a) => (
-          <path
-            key={`i${a}`}
-            d="M0,-2.5 C2,-4.5 2,-8 0,-10 C-2,-8 -2,-4.5 0,-2.5Z"
-            className="fill-accent-hover"
-            opacity={0.5}
-            transform={`rotate(${a})`}
-          />
-        ))}
-        <circle r="3" className="fill-accent-hover" />
-        <circle r="1.5" className="fill-accent" />
-      </g>
-    </svg>
   );
 }
 

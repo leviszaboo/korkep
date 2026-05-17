@@ -4,11 +4,11 @@ import { Suspense } from 'react';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { getStory } from '@/lib/api';
-import { ArticleCard } from '@/components/ArticleCard';
 import { BiasBar } from '@/components/BiasBar';
 import { TopicBadge } from '@/components/Badge';
 import { BackButton } from '@/components/BackButton';
 import { StoryDetailSkeleton } from '@/components/Skeleton';
+import { StoryDetailClient } from '@/components/StoryDetailClient';
 import { timeAgo } from '@/lib/utils';
 import type { BiasCounts } from '@/lib/types';
 
@@ -64,7 +64,7 @@ async function StoryContent({ id }: { id: number }) {
           <span className="text-xs text-faint">{timeAgo(latestPublishedAt)}</span>
         </div>
 
-        <h1 className="text-2xl font-semibold leading-tight text-foreground">
+        <h1 className="text-2xl font-bold leading-tight text-foreground md:text-3xl">
           {story.title}
         </h1>
 
@@ -77,17 +77,7 @@ async function StoryContent({ id }: { id: number }) {
         <BiasBar counts={bias} showLabels />
       </div>
 
-      <div className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-faint">
-          Coverage ({story.articles.length})
-        </h2>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          {story.articles.map((article) => (
-            <ArticleCard key={article.id} article={article} />
-          ))}
-        </div>
-      </div>
+      <StoryDetailClient articles={story.articles} bias={bias} />
     </div>
   );
 }

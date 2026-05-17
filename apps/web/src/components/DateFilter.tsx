@@ -1,44 +1,41 @@
 'use client';
 
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { useFilter } from './FilterContext';
 
 const periods = [
-  { key: '', label: 'All' },
-  { key: 'today', label: 'Today' },
-  { key: 'yesterday', label: 'Yesterday' },
-  { key: 'week', label: 'This week' },
+  { key: 'today', label: 'Ma' },
+  { key: 'yesterday', label: 'Tegnap' },
+  { key: 'week', label: 'Régebben' },
 ];
 
 export function DateFilter() {
   const searchParams = useSearchParams();
-  const activeSince = searchParams.get('since') ?? '';
-  const topic = searchParams.get('topic');
-  const sort = searchParams.get('sort');
+  const { optimisticSince, navigate } = useFilter();
 
-  function buildHref(since: string) {
-    const params = new URLSearchParams();
-    if (topic) params.set('topic', topic);
-    if (sort) params.set('sort', sort);
-    if (since) params.set('since', since);
+  function handleClick(since: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('since', since);
+    params.delete('page');
     const qs = params.toString();
-    return qs ? `/?${qs}` : '/';
+    const href = `/?${qs}`;
+    navigate(href, { since });
   }
 
   return (
     <div className="flex items-center gap-1 rounded-full bg-surface p-0.5">
       {periods.map((period) => (
-        <Link
+        <button
           key={period.key}
-          href={buildHref(period.key)}
-          className={`rounded-full px-3 py-1 text-xs transition-colors ${
-            activeSince === period.key
+          onClick={() => handleClick(period.key)}
+          className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm transition-colors ${
+            optimisticSince === period.key
               ? 'bg-foreground text-base font-medium'
               : 'text-muted hover:text-foreground'
           }`}
         >
           {period.label}
-        </Link>
+        </button>
       ))}
     </div>
   );

@@ -46,7 +46,7 @@ function FeaturedCard({ story }: { story: Story }) {
   if (story.imageUrl) {
     return (
       <Link href={`/stories/${story.id}`} className="group block">
-        <article className="relative overflow-hidden rounded-lg">
+        <article className="relative overflow-hidden">
           <div className="aspect-[2/1] sm:aspect-[5/2]">
             <img
               src={story.imageUrl}
@@ -129,7 +129,7 @@ function CompactCard({ story, fill = false }: { story: Story; fill?: boolean }) 
 
   return (
     <Link href={`/stories/${story.id}`} className={`group block${fill ? ' h-full' : ''}`}>
-      <article className={`overflow-hidden rounded-lg border-b border-border p-3.5 transition-all${fill ? ' flex h-full flex-col' : ''}`}>
+      <article className={`overflow-hidden border-b border-border p-3.5 transition-all${fill ? ' flex h-full flex-col' : ''}`}>
         <div className={`flex flex-col gap-2${fill ? ' flex-1' : ''}`}>
           <div className="flex items-center gap-1.5">
             {isFresh(story.latestPublishedAt) && <FreshBadge />}
@@ -171,7 +171,7 @@ function DefaultCard({ story }: { story: Story }) {
   if (story.imageUrl) {
     return (
       <Link href={`/stories/${story.id}`} className="group block">
-        <article className="relative aspect-[3/2] overflow-hidden rounded-lg">
+        <article className="relative aspect-[3/2] overflow-hidden">
           <img
             src={story.imageUrl}
             alt=""
@@ -202,7 +202,7 @@ function DefaultCard({ story }: { story: Story }) {
 
   return (
     <Link href={`/stories/${story.id}`} className="group block">
-      <article className="flex aspect-[3/2] flex-col overflow-hidden rounded-lg border-b border-border transition-all">
+      <article className="flex aspect-[3/2] flex-col overflow-hidden border-b border-border transition-all">
         <div className="flex flex-1 flex-col gap-2.5 p-4">
           {badges}
           <h2 className="text-base font-semibold leading-snug text-foreground transition-colors group-hover:text-accent line-clamp-2">

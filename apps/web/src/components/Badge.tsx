@@ -19,7 +19,7 @@ export function BiasBadge({ rating }: { rating: BiasRating }) {
 
 export function TopicBadge({ topic }: { topic: string }) {
   return (
-    <span className="inline-flex rounded-full bg-surface px-2.5 py-0.5 text-xs font-medium text-muted capitalize">
+    <span className="text-[10px] font-bold uppercase tracking-[1.5px] text-accent">
       {topic}
     </span>
   );
@@ -27,8 +27,8 @@ export function TopicBadge({ topic }: { topic: string }) {
 
 export function FreshBadge() {
   return (
-    <span className="inline-flex rounded-full bg-fresh-bg px-2.5 py-0.5 text-xs font-medium text-fresh">
-      Friss
+    <span className="text-[10px] font-semibold text-fresh">
+      ● Friss
     </span>
   );
 }

@@ -4,10 +4,10 @@ import { Suspense } from 'react';
 import Link from 'next/link';
 import { getStories } from '@/lib/api';
 import { StoryCard } from '@/components/StoryCard';
+import { TopicFilter } from '@/components/TopicFilter';
 import { TrendingStrip } from '@/components/TrendingStrip';
 import { InfiniteScroll } from '@/components/InfiniteScroll';
 import { NewsFeed } from '@/components/NewsFeed';
-import { FilterShell } from '@/components/FilterShell';
 import { HeroSkeleton, StoryCardSkeleton, TrendingStripSkeleton } from '@/components/Skeleton';
 import type { Story } from '@/lib/types';
 
@@ -36,18 +36,21 @@ export default async function HomePage({
   const params = await searchParams;
 
   return (
-    <FilterShell>
+    <div className="flex flex-col gap-6">
+      <Suspense>
+        <TopicFilter />
+      </Suspense>
+
       <Suspense fallback={<StoriesLoading />}>
         <Stories topic={params.topic} since={params.since} />
       </Suspense>
-    </FilterShell>
+    </div>
   );
 }
 
 async function Stories({ topic, since }: { topic?: string; since?: string }) {
-  const effectiveSince = since || 'today';
   const limit = topic ? 20 : 50;
-  const { data: stories, pagination } = await getStories(1, limit, topic, 'relevance', effectiveSince);
+  const { data: stories, pagination } = await getStories(1, limit, topic, 'relevance', since);
 
   if (stories.length === 0) {
     return (
@@ -58,7 +61,7 @@ async function Stories({ topic, since }: { topic?: string; since?: string }) {
     );
   }
 
-  if (!topic) {
+  if (!topic && !since) {
     return <GroupedView stories={stories} pagination={pagination} />;
   }
 
@@ -153,25 +156,31 @@ function GroupedView({
 
 function TopicGrid({ layout, stories }: { layout: SectionLayout; stories: Story[] }) {
   if (layout === 'highlight' && stories.length >= 2) {
-    const first = stories[0];
-    const rest = stories.slice(1);
     return (
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1.4fr_1fr]">
-        <StoryCard story={first} />
-        <div className="flex flex-col">
-          {rest.map((s, i) => (
-            <div key={s.id} className={`flex flex-1 flex-col justify-center${i < rest.length - 1 ? ' border-b border-border' : ''}`}>
-              <StoryCard story={s} compact fill />
-            </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <StoryCard story={stories[0]} />
+        <div className="grid auto-rows-fr gap-4">
+          {stories.slice(1, 3).map((s) => (
+            <StoryCard key={s.id} story={s} compact fill />
           ))}
         </div>
       </div>
     );
   }
 
+  if (layout === 'triple') {
+    return (
+      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+        {stories.slice(0, 3).map((s) => (
+          <StoryCard key={s.id} story={s} />
+        ))}
+      </div>
+    );
+  }
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-      {stories.map((s) => (
+    <div className="grid gap-4 sm:grid-cols-2">
+      {stories.slice(0, 4).map((s) => (
         <StoryCard key={s.id} story={s} />
       ))}
     </div>

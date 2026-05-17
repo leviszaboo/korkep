@@ -1,20 +1,39 @@
+'use client';
+
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import type { Story } from '@/lib/types';
+import { useSearchParams } from 'next/navigation';
+import type { Story, Paginated } from '@/lib/types';
 import { timeAgo } from '@/lib/utils';
 import { BiasBar } from './BiasBar';
 
-export function NewsFeed({ stories }: { stories: Story[] }) {
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+
+export function NewsFeed() {
+  const searchParams = useSearchParams();
+  const topic = searchParams.get('topic');
+  const [stories, setStories] = useState<Story[]>([]);
+
+  useEffect(() => {
+    const params = new URLSearchParams({ sort: 'latest', limit: '30' });
+    if (topic) params.set('topic', topic);
+    fetch(`${API_URL}/api/stories?${params}`)
+      .then((res) => res.json())
+      .then((data: Paginated<Story>) => setStories(data.data))
+      .catch(() => {});
+  }, [topic]);
+
   if (stories.length === 0) return null;
 
   return (
     <aside className="hidden lg:block">
-      <div className="sticky top-20">
-        <h2 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-faint">
+      <div className="sticky top-20 flex max-h-[calc(100vh-6rem)] flex-col">
+        <h2 className="mb-3 flex shrink-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-faint">
           <PulseIcon />
           Legfrissebb
         </h2>
-        <div className="flex flex-col">
-          {stories.map((story, i) => (
+        <div className="flex flex-col overflow-y-auto overscroll-contain">
+          {stories.map((story) => (
             <Link
               key={story.id}
               href={`/stories/${story.id}`}
@@ -27,7 +46,7 @@ export function NewsFeed({ stories }: { stories: Story[] }) {
                 <BiasBar counts={story.sourceBias} />
               </div>
               <div className="flex items-center gap-1.5 text-[11px] text-faint">
-                <span>{story.sourceCount} {story.sourceCount === 1 ? 'forrás' : 'forrás'}</span>
+                <span>{story.sourceCount} forrás</span>
                 <span>&middot;</span>
                 <span>{timeAgo(story.latestPublishedAt)}</span>
               </div>

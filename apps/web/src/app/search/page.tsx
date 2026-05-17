@@ -58,7 +58,7 @@ async function SearchResults({ query }: { query: string }) {
             className="group block"
           >
             {result.imageUrl ? (
-              <article className="relative aspect-[3/2] overflow-hidden rounded-lg">
+              <article className="relative aspect-[3/2] overflow-hidden">
                 <img
                   src={result.imageUrl}
                   alt=""
@@ -87,7 +87,7 @@ async function SearchResults({ query }: { query: string }) {
                 </div>
               </article>
             ) : (
-              <article className="flex aspect-[3/2] flex-col overflow-hidden rounded-lg border border-border bg-surface transition-all hover:border-border-strong hover:shadow-md">
+              <article className="flex aspect-[3/2] flex-col overflow-hidden border-b border-border transition-all">
                 <div className="flex flex-1 flex-col gap-2 p-4">
                   <div className="flex items-center gap-1.5">
                     {result.storyTopics?.map((t) => <TopicBadge key={t} topic={t} />)}
@@ -126,7 +126,7 @@ function SearchLoading() {
   return (
     <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
       {Array.from({ length: 6 }).map((_, i) => (
-        <div key={i} className="aspect-[3/2] animate-pulse rounded-lg border border-border bg-surface p-4">
+        <div key={i} className="aspect-[3/2] animate-pulse border-b border-border bg-surface p-4">
           <div className="flex h-full flex-col justify-end gap-2">
             <div className="h-4 w-16 rounded bg-elevated" />
             <div className="h-5 w-3/4 rounded bg-elevated" />

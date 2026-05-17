@@ -35,6 +35,7 @@ export interface Article {
   id: number;
   title: string;
   summary: string | null;
+  lead: string | null;
   mainEvent: string | null;
   location: string | null;
   entities: string[] | null;
