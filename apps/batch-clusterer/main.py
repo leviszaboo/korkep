@@ -11,9 +11,9 @@ logging.basicConfig(
     format="\033[36m%(asctime)s\033[0m \033[32m%(levelname)-5s\033[0m %(message)s",
     datefmt="%H:%M:%S",
 )
-log = logging.getLogger("clusterer")
+log = logging.getLogger("batch-clusterer")
 
-app = FastAPI(title="Ground News Clusterer")
+app = FastAPI(title="Körkép Batch Clusterer")
 
 
 @app.middleware("http")
@@ -48,13 +48,33 @@ class ReclusterResponse(BaseModel):
 
 @app.post("/recluster", response_model=ReclusterResponse)
 def recluster_endpoint(req: ReclusterRequest):
+    start = time.perf_counter()
+    n_items = len(req.items)
+    log.info("Recluster started: %d items, min_cluster_size=%d", n_items, req.min_cluster_size)
+
     ids = [item.id for item in req.items]
     embeddings = [item.embedding for item in req.items]
     timestamps = None
     if all(item.timestamp_hours is not None for item in req.items):
         timestamps = [item.timestamp_hours for item in req.items]
+
     labels = recluster(embeddings, min_cluster_size=req.min_cluster_size, timestamps_hours=timestamps)
+
     num_clusters = len(set(l for l in labels if l >= 0))
+    noise_count = sum(1 for l in labels if l < 0)
+    cluster_sizes = {}
+    for l in labels:
+        if l >= 0:
+            cluster_sizes[l] = cluster_sizes.get(l, 0) + 1
+    avg_cluster_size = sum(cluster_sizes.values()) / max(len(cluster_sizes), 1)
+    largest_cluster = max(cluster_sizes.values()) if cluster_sizes else 0
+
+    duration_ms = round((time.perf_counter() - start) * 1000)
+    log.info(
+        "Recluster complete: %d clusters, %d noise, avg_size=%.1f, largest=%d, %dms",
+        num_clusters, noise_count, avg_cluster_size, largest_cluster, duration_ms,
+    )
+
     results = [ReclusterResultItem(id=id, cluster=label) for id, label in zip(ids, labels)]
     return ReclusterResponse(results=results, num_clusters=num_clusters)
 
