@@ -1,14 +1,14 @@
 import Parser from 'rss-parser';
 import * as cheerio from 'cheerio';
 import type { RawArticle } from '@korkep/shared';
-import { BaseAdapter } from './base.js';
+import { BaseAdapter, type ScrapeStats } from './base.js';
 import { fetchHtml } from '../lib/http.js';
 import { logger } from '../logger.js';
 
 const parser = new Parser();
 
 const MIN_BODY_LENGTH = 100;
-const MIN_CONTENT_RATIO = 0.03;
+const MIN_CONTENT_RATIO = 0.01;
 
 interface ExtractionResult {
   body?: string;
@@ -20,8 +20,10 @@ interface ExtractionResult {
 
 export abstract class RssAdapter extends BaseAdapter {
   abstract readonly rssUrl: string;
+  private stats: ScrapeStats = { skipped: 0, fetchFailed: 0, extractionDegraded: 0, issues: [] };
 
   async fetchArticles(): Promise<RawArticle[]> {
+    this.stats = { skipped: 0, fetchFailed: 0, extractionDegraded: 0, issues: [] };
     const feed = await parser.parseURL(this.rssUrl);
     const articles: RawArticle[] = [];
 
@@ -31,10 +33,11 @@ export abstract class RssAdapter extends BaseAdapter {
       const extraction = await this.extractFromHtml(item);
 
       if (!extraction.body && !item.contentSnippet) {
-        logger.warn(
+        logger.debug(
           { url: item.link, source: this.sourceSlug, quality: extraction.quality },
           'No body content extracted, skipping article',
         );
+        this.stats.skipped++;
         continue;
       }
 
@@ -58,12 +61,17 @@ export abstract class RssAdapter extends BaseAdapter {
     return articles;
   }
 
+  getStats(): ScrapeStats {
+    return this.stats;
+  }
+
   private async extractFromHtml(item: Parser.Item): Promise<ExtractionResult> {
     let html: string;
     try {
       html = await fetchHtml(item.link!);
     } catch (err) {
-      logger.warn({ url: item.link, err }, 'HTML fetch failed');
+      logger.debug({ url: item.link, err }, 'HTML fetch failed');
+      this.stats.fetchFailed++;
       return { quality: 'fallback' };
     }
 
@@ -73,10 +81,11 @@ export abstract class RssAdapter extends BaseAdapter {
     const imageUrl = this.extractOgImage(html);
 
     if (!body || body.length < MIN_BODY_LENGTH) {
-      logger.warn(
+      logger.debug(
         { url: item.link, source: this.sourceSlug, bodyLength: body?.length ?? 0 },
         'Body extraction too short — selector may be broken',
       );
+      this.stats.extractionDegraded++;
       return {
         body: item.contentSnippet ?? item.content ?? undefined,
         lead,
@@ -88,7 +97,7 @@ export abstract class RssAdapter extends BaseAdapter {
 
     const contentRatio = body.length / html.length;
     if (contentRatio < MIN_CONTENT_RATIO) {
-      logger.warn(
+      logger.debug(
         { url: item.link, source: this.sourceSlug, contentRatio: contentRatio.toFixed(4) },
         'Content ratio suspiciously low — possible paywall or wrong page',
       );
