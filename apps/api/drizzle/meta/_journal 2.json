@@ -71,20 +71,6 @@
       "when": 1779566400000,
       "tag": "0009_add_story_centroid",
       "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1779652800000,
-      "tag": "0010_add_llm_usage_log",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1779739200000,
-      "tag": "0011_add_llm_usage_activity",
-      "breakpoints": true
     }
   ]
 }
