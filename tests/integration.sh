@@ -27,7 +27,7 @@ wait_for() {
 }
 
 API_URL=${API_URL:-http://localhost:3001}
-CLUSTERER_URL=${CLUSTERER_URL:-http://localhost:8101}
+BATCH_CLUSTERER_URL=${BATCH_CLUSTERER_URL:-http://localhost:8101}
 WEB_URL=${WEB_URL:-http://localhost:3000}
 
 echo ""
@@ -50,15 +50,15 @@ else
   fail "API health" "service not reachable"
 fi
 
-if wait_for "$CLUSTERER_URL/health" "Clusterer" 30 2; then
-  resp=$(curl -sf "$CLUSTERER_URL/health")
+if wait_for "$BATCH_CLUSTERER_URL/health" "Batch Clusterer" 30 2; then
+  resp=$(curl -sf "$BATCH_CLUSTERER_URL/health")
   if echo "$resp" | grep -q '"ok"'; then
-    pass "Clusterer health returns ok"
+    pass "Batch Clusterer health returns ok"
   else
-    fail "Clusterer health" "unexpected response: $resp"
+    fail "Batch Clusterer health" "unexpected response: $resp"
   fi
 else
-  fail "Clusterer health" "service not reachable"
+  fail "Batch Clusterer health" "service not reachable"
 fi
 
 # API endpoint tests
@@ -124,19 +124,19 @@ else
   fail "GET /api/search" "request failed"
 fi
 
-# Clusterer tests
+# Batch Clusterer tests
 echo ""
-echo "--- Clusterer Endpoints ---"
+echo "--- Batch Clusterer Endpoints ---"
 
-resp=$(curl -sf "$CLUSTERER_URL/health" || echo "ERROR")
+resp=$(curl -sf "$BATCH_CLUSTERER_URL/health" || echo "ERROR")
 if [ "$resp" != "ERROR" ]; then
   if echo "$resp" | grep -q '"ok"'; then
-    pass "Clusterer /health returns ok"
+    pass "Batch Clusterer /health returns ok"
   else
-    fail "Clusterer /health" "unexpected response: $resp"
+    fail "Batch Clusterer /health" "unexpected response: $resp"
   fi
 else
-  fail "Clusterer /health" "request failed"
+  fail "Batch Clusterer /health" "request failed"
 fi
 
 # Web app test

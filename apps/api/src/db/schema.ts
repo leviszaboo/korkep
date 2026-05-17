@@ -56,6 +56,8 @@ export const stories = pgTable(
     articleCount: integer('article_count').default(1).notNull(),
     sourceCount: integer('source_count').default(1).notNull(),
     relevanceScore: real('relevance_score').default(0).notNull(),
+    centroidEmbedding: vector('centroid_embedding'),
+    entities: text('entities').array(),
     firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -101,5 +103,24 @@ export const articles = pgTable(
     index('idx_articles_published').on(table.publishedAt),
     index('idx_articles_story').on(table.storyId),
     index('idx_articles_fingerprint').on(table.fingerprint),
+  ],
+);
+
+export const llmUsageLog = pgTable(
+  'llm_usage_log',
+  {
+    id: serial('id').primaryKey(),
+    provider: text('provider').notNull(),
+    model: text('model').notNull(),
+    operation: text('operation').notNull(),
+    activity: text('activity').notNull(),
+    promptTokens: integer('prompt_tokens'),
+    completionTokens: integer('completion_tokens'),
+    totalTokens: integer('total_tokens'),
+    calledAt: timestamp('called_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_llm_usage_log_called_at').on(table.calledAt),
+    index('idx_llm_usage_log_activity').on(table.activity),
   ],
 );

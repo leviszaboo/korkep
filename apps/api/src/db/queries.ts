@@ -1,4 +1,5 @@
 import { sql, eq, desc, and, count } from 'drizzle-orm';
+import { TOPIC_WEIGHTS } from '@korkep/shared';
 import { db, schema } from './index.js';
 
 export type SortMode = 'relevance' | 'latest';
@@ -6,29 +7,53 @@ export type SortMode = 'relevance' | 'latest';
 export async function getStories(page: number, limit: number, topic?: string, sort: SortMode = 'relevance', since?: string) {
   const offset = (page - 1) * limit;
 
-  const conditions = [];
-  if (topic) conditions.push(sql`${schema.stories.topics} @> ARRAY[${topic}]::text[]`);
-  if (since) {
+  function buildTimeConditions(sinceValue: string) {
+    const conds: ReturnType<typeof sql>[] = [];
     const now = new Date();
     let sinceDate: Date;
-    if (since === 'today') {
+    let untilDate: Date | null = null;
+    if (sinceValue === 'today') {
       sinceDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    } else if (since === 'yesterday') {
+    } else if (sinceValue === 'yesterday') {
       sinceDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-    } else if (since === 'week') {
+      untilDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else if (sinceValue === 'week') {
       sinceDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+      untilDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
     } else {
       sinceDate = new Date(0);
     }
-    conditions.push(sql`(SELECT MAX(a.published_at) FROM articles a WHERE a.story_id = ${schema.stories.id}) >= ${sinceDate.toISOString()}`);
+    conds.push(sql`(SELECT MAX(a.published_at) FROM articles a WHERE a.story_id = ${schema.stories.id}) >= ${sinceDate.toISOString()}`);
+    if (untilDate) {
+      conds.push(sql`(SELECT MAX(a.published_at) FROM articles a WHERE a.story_id = ${schema.stories.id}) < ${untilDate.toISOString()}`);
+    }
+    return conds;
   }
+
+  const conditions = [];
+  if (topic) conditions.push(sql`${schema.stories.topics} @> ARRAY[${topic}]::text[]`);
+  if (since) conditions.push(...buildTimeConditions(since));
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
   const latestPublishedAtExpr = sql`(SELECT MAX(a.published_at) FROM articles a WHERE a.story_id = ${schema.stories.id})`;
 
+  const topicWeightCases = Object.entries(TOPIC_WEIGHTS)
+    .map(([t, w]) => `WHEN topics[1] = '${t}' THEN ${w}`)
+    .join(' ');
+  const topicWeightExpr = topic
+    ? sql`1.0`
+    : sql.raw(`(CASE ${topicWeightCases} ELSE 0.5 END)`);
+
+  const primaryTopicBoost = topic
+    ? sql`CASE WHEN topics[1] = ${topic} THEN 5.0 ELSE 0.0 END`
+    : sql`0.0`;
+
+  const useTimeDecay = sort === 'relevance' && since !== 'week';
   const orderBy = sort === 'relevance'
-    ? sql`(${schema.stories.relevanceScore} + GREATEST(0, 10.0 * exp(-EXTRACT(EPOCH FROM (now() - ${schema.stories.firstSeenAt})) / 43200.0))) DESC`
+    ? useTimeDecay
+      ? sql`(${schema.stories.relevanceScore} * ${topicWeightExpr} + GREATEST(0, 6.0 * exp(-EXTRACT(EPOCH FROM (now() - ${schema.stories.firstSeenAt})) / 86400.0)) + ${primaryTopicBoost}) DESC`
+      : sql`(${schema.stories.relevanceScore} * ${topicWeightExpr} + ${primaryTopicBoost}) DESC`
     : sql`${latestPublishedAtExpr} DESC NULLS LAST`;
 
   const [storiesResult, totalResult] = await Promise.all([
@@ -45,7 +70,26 @@ export async function getStories(page: number, limit: number, topic?: string, so
       .where(where),
   ]);
 
-  const storyIds = storiesResult.map((s) => s.id);
+  let finalStories = storiesResult;
+
+  if (since === 'today' && storiesResult.length < 5) {
+    const backfillConditions = [];
+    if (topic) backfillConditions.push(sql`${schema.stories.topics} @> ARRAY[${topic}]::text[]`);
+    backfillConditions.push(...buildTimeConditions('yesterday'));
+    const backfillWhere = and(...backfillConditions);
+    const todayIds = new Set(storiesResult.map((s) => s.id));
+
+    const backfillResult = await db
+      .select()
+      .from(schema.stories)
+      .where(backfillWhere)
+      .orderBy(orderBy)
+      .limit(limit - storiesResult.length);
+
+    finalStories = [...storiesResult, ...backfillResult.filter((s) => !todayIds.has(s.id))];
+  }
+
+  const storyIds = finalStories.map((s) => s.id);
 
   let biasMap = new Map<number, { left: number; center: number; right: number }>();
   let imageMap = new Map<number, string>();
@@ -123,7 +167,7 @@ export async function getStories(page: number, limit: number, topic?: string, so
     }
   }
 
-  const data = storiesResult.map((story) => ({
+  const data = finalStories.map((story) => ({
     ...story,
     imageUrl: imageMap.get(story.id) ?? null,
     sourceBias: biasMap.get(story.id) ?? { left: 0, center: 0, right: 0 },

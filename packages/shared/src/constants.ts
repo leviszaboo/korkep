@@ -79,7 +79,7 @@ export const SOURCES: SourceConfig[] = [
     url: 'https://www.blikk.hu',
     rssUrl: 'https://www.blikk.hu/rss',
     biasRating: 'center',
-    logoUrl: 'https://www.blikk.hu/favicon-32x32.png',
+    logoUrl: 'https://ocdn.eu/blikk_static/resource/icons/new/favicon.ico',
     scrapeIntervalMinutes: 15,
   },
   {
@@ -88,16 +88,88 @@ export const SOURCES: SourceConfig[] = [
     url: 'https://hang.hu',
     rssUrl: 'https://hang.hu/rss',
     biasRating: 'center-right',
-    logoUrl: 'https://hang.hu/favicon-32x32.png',
+    logoUrl: 'https://hang.hu/favicon.ico',
     scrapeIntervalMinutes: 20,
+  },
+  {
+    name: 'Euronews Hungary',
+    slug: 'euronews-hu',
+    url: 'https://hu.euronews.com',
+    rssUrl: 'https://hu.euronews.com/rss',
+    biasRating: 'center',
+    logoUrl: 'https://hu.euronews.com/favicon.ico',
+    scrapeIntervalMinutes: 15,
+  },
+  {
+    name: 'Metropol',
+    slug: 'metropol',
+    url: 'https://metropol.hu',
+    rssUrl: 'https://metropol.hu/publicapi/hu/rss/metropol/articles',
+    biasRating: 'right',
+    logoUrl: 'https://metropol.hu/favicon-32x32.png',
+    scrapeIntervalMinutes: 15,
+  },
+  {
+    name: 'Ripost',
+    slug: 'ripost',
+    url: 'https://ripost.hu',
+    rssUrl: 'https://ripost.hu/publicapi/hu/rss/ripost/articles',
+    biasRating: 'right',
+    logoUrl: 'https://ripost.hu/favicon-32x32.png',
+    scrapeIntervalMinutes: 15,
+  },
+  {
+    name: 'ATV',
+    slug: 'atv',
+    url: 'https://www.atv.hu',
+    rssUrl: 'https://www.atv.hu/feed/',
+    biasRating: 'left',
+    logoUrl: 'https://www.atv.hu/wp-content/uploads/2024/11/favicon-1.ico',
+    scrapeIntervalMinutes: 15,
+  },
+  {
+    name: 'Portfolio',
+    slug: 'portfolio',
+    url: 'https://www.portfolio.hu',
+    rssUrl: 'https://www.portfolio.hu/rss/all.xml',
+    biasRating: 'center',
+    logoUrl: 'https://assets.portfolio.hu/images/favicon/favicon-32x32.png',
+    scrapeIntervalMinutes: 10,
+  },
+  {
+    name: 'Világgazdaság',
+    slug: 'vg',
+    url: 'https://www.vg.hu',
+    rssUrl: 'https://www.vg.hu/publicapi/hu/rss/vilaggazdasag/articles',
+    biasRating: 'center-right',
+    logoUrl: 'https://www.vg.hu/favicon-32x32.png',
+    scrapeIntervalMinutes: 15,
   },
 ];
 
+function envFloat(key: string, fallback: number): number {
+  const v = typeof process !== 'undefined' ? process.env?.[key] : undefined;
+  if (v == null || v === '') return fallback;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function envInt(key: string, fallback: number): number {
+  const v = typeof process !== 'undefined' ? process.env?.[key] : undefined;
+  if (v == null || v === '') return fallback;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 export const CLUSTERING = {
-  similarityThreshold: 0.72,
-  timeWindowHours: 24,
-  maxClusterSize: 12,
-} as const;
+  similarityThreshold: envFloat('CLUSTER_SIMILARITY_THRESHOLD', 0.72),
+  timeWindowHours: envInt('CLUSTER_TIME_WINDOW_HOURS', 24),
+  maxClusterSize: envInt('CLUSTER_MAX_SIZE', 12),
+  minCoherenceSimilarity: envFloat('CLUSTER_MIN_COHERENCE', 0.60),
+  entityOverlapWeight: envFloat('CLUSTER_ENTITY_WEIGHT', 0.25),
+  semanticWeight: envFloat('CLUSTER_SEMANTIC_WEIGHT', 0.65),
+  tokenOverlapWeight: envFloat('CLUSTER_TOKEN_WEIGHT', 0.10),
+};
 
 export const EMBEDDING = {
   dim: 1024,
@@ -121,3 +193,19 @@ export const TOPICS = [
 ] as const;
 
 export type Topic = (typeof TOPICS)[number];
+
+export const TOPIC_WEIGHTS: Record<string, number> = {
+  politika: 1.0,
+  világ: 1.0,
+  gazdaság: 0.85,
+  társadalom: 0.85,
+  bűnügyek: 0.85,
+  sport: 0.65,
+  tudomány: 0.65,
+  technológia: 0.65,
+  vélemény: 0.65,
+  kultúra: 0.4,
+  időjárás: 0.4,
+  szórakozás: 0.4,
+  egészség: 0.4,
+};
