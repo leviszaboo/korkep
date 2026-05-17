@@ -1,4 +1,5 @@
 import logging
+import os
 
 import numpy as np
 from sklearn.cluster import HDBSCAN
@@ -7,13 +8,15 @@ from umap import UMAP
 
 log = logging.getLogger("batch-clusterer")
 
-MAX_CLUSTER_SIZE = 24
-TIME_WEIGHT = 0.55
-TIME_SCALE_HOURS = 12.0
+MAX_CLUSTER_SIZE = int(os.environ.get("HDBSCAN_MAX_CLUSTER_SIZE", "24"))
+TIME_WEIGHT = float(os.environ.get("HDBSCAN_TIME_WEIGHT", "0.55"))
+TIME_SCALE_HOURS = float(os.environ.get("HDBSCAN_TIME_SCALE_HOURS", "12.0"))
+MIN_SAMPLES = int(os.environ.get("HDBSCAN_MIN_SAMPLES", "3"))
+CLUSTER_SELECTION_EPSILON = float(os.environ.get("HDBSCAN_CLUSTER_SELECTION_EPSILON", "0.0"))
 
-UMAP_COMPONENTS = 22
-UMAP_NEIGHBORS = 15
-UMAP_MIN_ARTICLES = 43
+UMAP_COMPONENTS = int(os.environ.get("HDBSCAN_UMAP_COMPONENTS", "22"))
+UMAP_NEIGHBORS = int(os.environ.get("HDBSCAN_UMAP_NEIGHBORS", "15"))
+UMAP_MIN_ARTICLES = int(os.environ.get("HDBSCAN_UMAP_MIN_ARTICLES", "43"))
 
 
 def _time_distance_matrix(timestamps: np.ndarray) -> np.ndarray:
@@ -161,9 +164,9 @@ def recluster(
 
         clusterer = HDBSCAN(
             min_cluster_size=min_cluster_size,
-            min_samples=3,
+            min_samples=MIN_SAMPLES,
             metric="precomputed",
-            cluster_selection_epsilon=0.0,
+            cluster_selection_epsilon=CLUSTER_SELECTION_EPSILON,
         )
         labels = clusterer.fit_predict(dist_matrix)
     else:
@@ -177,13 +180,33 @@ def recluster(
 
         clusterer = HDBSCAN(
             min_cluster_size=min_cluster_size,
-            min_samples=3,
+            min_samples=MIN_SAMPLES,
             metric="precomputed",
-            cluster_selection_epsilon=0.0,
+            cluster_selection_epsilon=CLUSTER_SELECTION_EPSILON,
         )
         labels = clusterer.fit_predict(dist_matrix)
 
     pre_split_clusters = len(set(l for l in labels if l >= 0))
+    noise_count = int((labels < 0).sum())
+    cluster_sizes = {}
+    for l in labels:
+        if l >= 0:
+            cluster_sizes[l] = cluster_sizes.get(l, 0) + 1
+    size_dist = {}
+    for sz in cluster_sizes.values():
+        size_dist[sz] = size_dist.get(sz, 0) + 1
+    log.info(
+        "Pre-split: %d clusters, %d noise, size distribution: %s",
+        pre_split_clusters, noise_count,
+        dict(sorted(size_dist.items())),
+    )
+    if cluster_sizes:
+        sizes = list(cluster_sizes.values())
+        log.info(
+            "Cluster stats: avg=%.1f, max=%d, median=%d",
+            sum(sizes) / len(sizes), max(sizes), sorted(sizes)[len(sizes) // 2],
+        )
+
     labels = _split_large_clusters(labels, matrix, ts, MAX_CLUSTER_SIZE)
     post_split_clusters = len(set(l for l in labels if l >= 0))
 
