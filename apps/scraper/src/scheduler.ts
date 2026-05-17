@@ -1,5 +1,5 @@
 import { SOURCES } from '@korkep/shared';
-import { scrapeQueue, reclusterQueue } from './queue.js';
+import { scrapeQueue, reclusterQueue, repairQueue } from './queue.js';
 import { logger } from './logger.js';
 
 export async function startScheduler() {
@@ -26,9 +26,17 @@ export async function startScheduler() {
 
   await reclusterQueue.upsertJobScheduler(
     'recluster',
-    { every: 1 * 60 * 60 * 1000 },
+    { every: 1 * 30 * 60 * 1000 },
     { name: 'recluster', data: {} },
   );
 
-  logger.info('Scheduled recluster job every hour');
+  logger.info('Scheduled recluster job every 30 minutes');
+
+  await repairQueue.upsertJobScheduler(
+    'repair',
+    { every: 15 * 60 * 1000 },
+    { name: 'repair', data: {} },
+  );
+
+  logger.info('Scheduled repair job every 15 minutes');
 }
