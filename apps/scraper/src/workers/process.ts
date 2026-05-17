@@ -57,6 +57,7 @@ export function startProcessWorker() {
           raw.title,
           raw.body ?? null,
           raw.lead ?? null,
+          'scrape_summarize',
         );
         if (analysis) {
           summary = analysis.summary;
@@ -89,7 +90,7 @@ export function startProcessWorker() {
       });
       let embedding: number[] | null = null;
       try {
-        embedding = await embeddingBatcher.embed(embeddingText);
+        embedding = await embeddingBatcher.embed(embeddingText, 'scrape_embed');
       } catch (err) {
         logger.error({ err, url: raw.url }, 'Embedding failed, storing without');
       }
@@ -98,7 +99,7 @@ export function startProcessWorker() {
       let storyId: number | null = null;
       if (embedding && articleType !== 'aggregation') {
         try {
-          storyId = await assignStory(headline ?? raw.title, embedding, sourceId);
+          storyId = await assignStory(headline ?? raw.title, embedding, sourceId, entities);
         } catch (err) {
           logger.error({ err, url: raw.url }, 'Clustering failed, storing without story');
         }

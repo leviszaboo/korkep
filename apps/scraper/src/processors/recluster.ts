@@ -2,7 +2,8 @@ import { gt, inArray, sql } from 'drizzle-orm';
 import { db, schema } from '../lib/db.js';
 import { config } from '../config.js';
 import { CLUSTERING } from '@korkep/shared';
-import { generateStoryTitle, generateStorySummary } from '../processors/summarizer.js';
+import { generateStoryTitleAndSummary, type StoryTitleResult } from '../processors/summarizer.js';
+import type { LlmActivity } from '../lib/llm-usage.js';
 import { logger } from '../logger.js';
 
 interface ReclusterResultItem {
@@ -46,7 +47,11 @@ function aggregateTopics(articleTopics: (string[] | null)[]): string[] {
     .map(([topic]) => topic);
 }
 
-export async function runRecluster() {
+export async function runRecluster(activity: LlmActivity = 'scheduled_recluster') {
+  logger.info(
+    { noCache: config.recluster.noCache, storyModel: config.summarizer.storyModel },
+    'Recluster settings',
+  );
   const cutoff = new Date(Date.now() - CLUSTERING.timeWindowHours * 60 * 60 * 1000);
 
   const articles = await db
@@ -90,7 +95,7 @@ export async function runRecluster() {
 
   logger.info({ count: items.length }, 'Sending articles to HDBSCAN recluster');
 
-  const res = await fetch(`${config.clusterer.url}/recluster`, {
+  const res = await fetch(`${config.batchClusterer.url}/recluster`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ items, min_cluster_size: 2 }),
@@ -146,9 +151,6 @@ export async function runRecluster() {
     }
   }
 
-  await db.update(schema.articles).set({ storyId: null });
-  await db.delete(schema.stories);
-
   // Prepare all cluster metadata
   interface ClusterData {
     articleIds: number[];
@@ -180,8 +182,99 @@ export async function runRecluster() {
   }
 
   // Generate titles and summaries in parallel via OpenRouter
+  // Clusters may be split by the LLM if incoherent, producing additional sub-clusters
   const LLM_CONCURRENCY = 15;
-  const storyResults: Array<{ title: string; summary: string | null }> = new Array(clusters.length);
+
+  interface FinalStory {
+    title: string;
+    summary: string | null;
+    articleIds: number[];
+    sourceIds: Set<number>;
+    biasGroups: Set<string>;
+    firstSeenAt: Date;
+    relevanceScore: number;
+    storyTopics: string[];
+  }
+
+  const finalStories: FinalStory[] = [];
+
+  async function processCluster(cluster: ClusterData): Promise<FinalStory[]> {
+    if (!config.recluster.noCache) {
+      const cached = storyFingerprints.get(cluster.clusterFingerprint);
+      if (cached) {
+        logger.info({ storyTitle: cached.title, articleCount: cluster.articleIds.length }, 'Reused cached story title/summary');
+        return [{ ...cluster, title: cached.title, summary: cached.summary }];
+      }
+    }
+
+    if (cluster.articleIds.length < 2) {
+      return [{ ...cluster, title: cluster.clusterArticles[0].title, summary: cluster.clusterArticles[0].summary }];
+    }
+
+    const articles = cluster.clusterArticles.map((a) => ({ id: a.id, title: a.title, summary: a.summary }));
+    const result = await generateStoryTitleAndSummary(articles, activity);
+
+    if (result && !result.coherent) {
+      const groupDetails = result.groups.map((ids) =>
+        ids.map((id) => cluster.clusterArticles.find((a) => a.id === id)?.title ?? `#${id}`),
+      );
+      logger.info(
+        { groups: groupDetails, articleCount: cluster.articleIds.length },
+        'LLM detected incoherent cluster, splitting',
+      );
+
+      const subStories: FinalStory[] = [];
+      for (const groupIds of result.groups) {
+        const groupArticles = groupIds
+          .map((id) => cluster.clusterArticles.find((a) => a.id === id))
+          .filter((a): a is NonNullable<typeof a> => a != null);
+
+        if (groupArticles.length === 0) continue;
+
+        const subSourceIds = new Set(groupArticles.map((a) => a.sourceId));
+        const subBiasGroups = new Set(
+          [...subSourceIds].map((sid) => normalizeBiasGroup(sourceBiasMap.get(sid) ?? 'center')),
+        );
+        const subFirstSeenAt = groupArticles.reduce((earliest, a) => {
+          const ts = a.publishedAt ?? a.createdAt;
+          return ts < earliest ? ts : earliest;
+        }, groupArticles[0].publishedAt ?? groupArticles[0].createdAt);
+
+        let subTitle = groupArticles[0].title;
+        let subSummary: string | null = groupArticles[0].summary;
+        if (groupArticles.length >= 2) {
+          const subResult = await generateStoryTitleAndSummary(
+            groupArticles.map((a) => ({ id: a.id, title: a.title, summary: a.summary })),
+            activity,
+          );
+          if (subResult?.coherent) {
+            subTitle = subResult.title;
+            subSummary = subResult.summary;
+          }
+        }
+
+        subStories.push({
+          title: subTitle,
+          summary: subSummary,
+          articleIds: groupArticles.map((a) => a.id),
+          sourceIds: subSourceIds,
+          biasGroups: subBiasGroups,
+          firstSeenAt: subFirstSeenAt,
+          relevanceScore: computeRelevanceScore(subSourceIds.size, groupArticles.length, subBiasGroups.size),
+          storyTopics: aggregateTopics(groupArticles.map((a) => a.topics)),
+        });
+      }
+
+      return subStories;
+    }
+
+    if (result?.coherent) {
+      logger.info({ storyTitle: result.title, articleCount: cluster.articleIds.length }, 'Generated story title');
+      return [{ ...cluster, title: result.title, summary: result.summary }];
+    }
+
+    return [{ ...cluster, title: cluster.clusterArticles[0].title, summary: cluster.clusterArticles[0].summary }];
+  }
 
   let running = 0;
   let next = 0;
@@ -193,36 +286,23 @@ export async function runRecluster() {
       while (running < LLM_CONCURRENCY && next < clusters.length) {
         const idx = next++;
         running++;
-        const cluster = clusters[idx];
 
-        (async () => {
-          const cached = storyFingerprints.get(cluster.clusterFingerprint);
-          if (cached) {
-            storyResults[idx] = { title: cached.title, summary: cached.summary };
-            logger.info({ storyTitle: cached.title, articleCount: cluster.articleIds.length }, 'Reused cached story title/summary');
-            return;
-          }
-
-          const articleTitles = cluster.clusterArticles.map((a) => a.title);
-          let storyTitle = cluster.clusterArticles[0].title;
-          if (cluster.articleIds.length >= 2) {
-            const generatedTitle = await generateStoryTitle(articleTitles);
-            if (generatedTitle) {
-              storyTitle = generatedTitle;
-              logger.info({ storyTitle, articleCount: cluster.articleIds.length }, 'Generated story title');
-            }
-          }
-
-          const articleSummaries = cluster.clusterArticles
-            .map((a) => a.summary)
-            .filter((s): s is string => s != null);
-          const storySummary = await generateStorySummary(articleSummaries, storyTitle);
-
-          storyResults[idx] = { title: storyTitle, summary: storySummary };
-        })()
+        processCluster(clusters[idx])
+          .then((stories) => {
+            finalStories.push(...stories);
+          })
           .catch((err) => {
-            logger.error({ err, articleCount: cluster.articleIds.length }, 'Story title/summary generation failed');
-            storyResults[idx] = { title: cluster.clusterArticles[0].title, summary: null };
+            logger.error({ err, articleCount: clusters[idx].articleIds.length }, 'Story title/summary generation failed');
+            finalStories.push({
+              title: clusters[idx].clusterArticles[0].title,
+              summary: null,
+              articleIds: clusters[idx].articleIds,
+              sourceIds: clusters[idx].sourceIds,
+              biasGroups: clusters[idx].biasGroups,
+              firstSeenAt: clusters[idx].firstSeenAt,
+              relevanceScore: clusters[idx].relevanceScore,
+              storyTopics: clusters[idx].storyTopics,
+            });
           })
           .finally(() => {
             running--;
@@ -240,34 +320,180 @@ export async function runRecluster() {
     if (clusters.length === 0 && !settled) { settled = true; resolve(); }
   });
 
-  logger.info({ total: clusters.length }, 'Story title/summary generation complete');
+  logger.info({ total: finalStories.length, originalClusters: clusters.length }, 'Story title/summary generation complete');
 
-  // Write all stories and assign articles to DB
-  for (let i = 0; i < clusters.length; i++) {
-    const cluster = clusters[i];
-    const { title, summary } = storyResults[i];
+  // Post-merge: merge similar clusters that HDBSCAN kept separate
+  const mergeThreshold = config.recluster.postMergeThreshold;
+  const mergeMaxSize = config.recluster.postMergeMaxSize;
 
-    const [newStory] = await db
-      .insert(schema.stories)
-      .values({
-        title,
-        summary,
-        topics: cluster.storyTopics.length > 0 ? cluster.storyTopics : null,
-        articleCount: cluster.articleIds.length,
-        sourceCount: cluster.sourceIds.size,
-        relevanceScore: cluster.relevanceScore,
-        firstSeenAt: cluster.firstSeenAt,
-      })
-      .returning({ id: schema.stories.id });
+  if (mergeThreshold < 1.0 && finalStories.length > 1) {
+    const centroids: number[][] = finalStories.map((story) => {
+      const vecs = story.articleIds
+        .map((id) => articleMap.get(id)?.embedding)
+        .filter((e): e is number[] => e != null);
+      if (vecs.length === 0) return [];
+      const dim = vecs[0].length;
+      const centroid = new Array(dim).fill(0);
+      for (const v of vecs) {
+        for (let i = 0; i < dim; i++) centroid[i] += v[i];
+      }
+      for (let i = 0; i < dim; i++) centroid[i] /= vecs.length;
+      return centroid;
+    });
 
-    await db
-      .update(schema.articles)
-      .set({ storyId: newStory.id })
-      .where(inArray(schema.articles.id, cluster.articleIds));
+    const withCentroid = centroids.filter((c) => c.length > 0).length;
+    const multiArticle = finalStories.filter((s) => s.articleIds.length >= 2).length;
+    logger.info(
+      { totalStories: finalStories.length, withCentroid, multiArticle, threshold: mergeThreshold },
+      'Post-merge: starting centroid comparison',
+    );
+
+    // Build merge graph via connected components
+    const parent = Array.from({ length: finalStories.length }, (_, i) => i);
+    function find(x: number): number {
+      while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+      return x;
+    }
+    function union(a: number, b: number) { parent[find(a)] = find(b); }
+
+    function cosineSim(a: number[], b: number[]): number {
+      if (a.length === 0 || b.length === 0) return 0;
+      let dot = 0, magA = 0, magB = 0;
+      for (let i = 0; i < a.length; i++) {
+        dot += a[i] * b[i];
+        magA += a[i] * a[i];
+        magB += b[i] * b[i];
+      }
+      const denom = Math.sqrt(magA) * Math.sqrt(magB);
+      return denom > 0 ? dot / denom : 0;
+    }
+
+    // Debug: find top similarities
+    const topPairs: { i: number; j: number; sim: number }[] = [];
+    for (let i = 0; i < finalStories.length; i++) {
+      for (let j = i + 1; j < finalStories.length; j++) {
+        if (centroids[i].length === 0 || centroids[j].length === 0) continue;
+        const sim = cosineSim(centroids[i], centroids[j]);
+        if (sim > mergeThreshold - 0.10) {
+          topPairs.push({ i, j, sim });
+        }
+      }
+    }
+    topPairs.sort((a, b) => b.sim - a.sim);
+    if (topPairs.length > 0) {
+      const top10 = topPairs.slice(0, 10).map((p) => ({
+        sim: p.sim.toFixed(4),
+        a: finalStories[p.i].title.slice(0, 50),
+        b: finalStories[p.j].title.slice(0, 50),
+        sizeA: finalStories[p.i].articleIds.length,
+        sizeB: finalStories[p.j].articleIds.length,
+      }));
+      logger.info({ top10, threshold: mergeThreshold }, 'Post-merge: top centroid similarities');
+    }
+
+    for (let i = 0; i < finalStories.length; i++) {
+      for (let j = i + 1; j < finalStories.length; j++) {
+        if (find(i) === find(j)) continue;
+        const sim = cosineSim(centroids[i], centroids[j]);
+        if (sim >= mergeThreshold) {
+          // Check merged size wouldn't exceed cap
+          const rootI = find(i);
+          const rootJ = find(j);
+          let sizeI = 0, sizeJ = 0;
+          for (let k = 0; k < finalStories.length; k++) {
+            if (find(k) === rootI) sizeI += finalStories[k].articleIds.length;
+            if (find(k) === rootJ) sizeJ += finalStories[k].articleIds.length;
+          }
+          if (sizeI + sizeJ <= mergeMaxSize) {
+            union(i, j);
+          }
+        }
+      }
+    }
+
+    // Collect merged groups
+    const mergeGroups = new Map<number, number[]>();
+    for (let i = 0; i < finalStories.length; i++) {
+      const root = find(i);
+      const group = mergeGroups.get(root) ?? [];
+      group.push(i);
+      mergeGroups.set(root, group);
+    }
+
+    const mergedCount = [...mergeGroups.values()].filter((g) => g.length > 1).length;
+    if (mergedCount > 0) {
+      const mergedStories: FinalStory[] = [];
+      for (const [, indices] of mergeGroups) {
+        if (indices.length === 1) {
+          mergedStories.push(finalStories[indices[0]]);
+          continue;
+        }
+        // Merge all stories in this group
+        const base = finalStories[indices[0]];
+        const allArticleIds = indices.flatMap((i) => finalStories[i].articleIds);
+        const allSourceIds = new Set(indices.flatMap((i) => [...finalStories[i].sourceIds]));
+        const allBiasGroups = new Set(indices.flatMap((i) => [...finalStories[i].biasGroups]));
+        const earliestFirst = indices.reduce((earliest, i) => {
+          const fs = finalStories[i].firstSeenAt;
+          return fs < earliest ? fs : earliest;
+        }, base.firstSeenAt);
+        const allTopics = aggregateTopics(
+          allArticleIds.map((id) => articleMap.get(id)?.topics ?? null),
+        );
+
+        // Use title from the largest sub-cluster
+        const largestIdx = indices.reduce((best, i) =>
+          finalStories[i].articleIds.length > finalStories[best].articleIds.length ? i : best, indices[0]);
+
+        mergedStories.push({
+          title: finalStories[largestIdx].title,
+          summary: finalStories[largestIdx].summary,
+          articleIds: allArticleIds,
+          sourceIds: allSourceIds,
+          biasGroups: allBiasGroups,
+          firstSeenAt: earliestFirst,
+          relevanceScore: computeRelevanceScore(allSourceIds.size, allArticleIds.length, allBiasGroups.size),
+          storyTopics: allTopics,
+        });
+      }
+
+      logger.info(
+        { merged: mergedCount, before: finalStories.length, after: mergedStories.length, threshold: mergeThreshold },
+        'Post-merge complete',
+      );
+      finalStories.length = 0;
+      finalStories.push(...mergedStories);
+    }
   }
 
+  // Swap old clusters for new ones in a single transaction
+  await db.transaction(async (tx) => {
+    await tx.update(schema.articles).set({ storyId: null });
+    await tx.delete(schema.stories);
+
+    for (const story of finalStories) {
+      const [newStory] = await tx
+        .insert(schema.stories)
+        .values({
+          title: story.title,
+          summary: story.summary,
+          topics: story.storyTopics.length > 0 ? story.storyTopics : null,
+          articleCount: story.articleIds.length,
+          sourceCount: story.sourceIds.size,
+          relevanceScore: story.relevanceScore,
+          firstSeenAt: story.firstSeenAt,
+        })
+        .returning({ id: schema.stories.id });
+
+      await tx
+        .update(schema.articles)
+        .set({ storyId: newStory.id })
+        .where(inArray(schema.articles.id, story.articleIds));
+    }
+  });
+
   logger.info(
-    { stories: clusters.length, articles: withEmbeddings.length },
+    { stories: finalStories.length, articles: withEmbeddings.length },
     'Recluster complete',
   );
 }

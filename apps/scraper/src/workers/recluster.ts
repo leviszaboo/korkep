@@ -7,8 +7,10 @@ export function startReclusterWorker() {
   const worker = new Worker(
     'recluster',
     async () => {
-      logger.info('Starting periodic recluster');
-      await runRecluster();
+      const startTime = Date.now();
+      logger.info('Periodic recluster started');
+      await runRecluster('scheduled_recluster');
+      logger.info({ durationMs: Date.now() - startTime }, 'Periodic recluster finished');
     },
     {
       connection: { url: config.redis.url },

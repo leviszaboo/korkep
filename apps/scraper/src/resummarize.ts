@@ -1,6 +1,6 @@
 import { eq, gt } from 'drizzle-orm';
 import { db, pool, schema } from './lib/db.js';
-import { analyzeArticleViaOpenRouter, generateStoryTitle, generateStorySummary } from './processors/summarizer.js';
+import { analyzeArticleViaOpenRouter, generateStoryTitleAndSummary } from './processors/summarizer.js';
 import { logger } from './logger.js';
 
 const CONCURRENCY = 15;
@@ -38,7 +38,7 @@ async function resummarizeArticles() {
         running++;
         const article = articles[i];
 
-        analyzeArticleViaOpenRouter(article.title, article.body, article.lead)
+        analyzeArticleViaOpenRouter(article.title, article.body, article.lead, 'manual_resummarize')
           .then(async (result) => {
             if (result) {
               await db
@@ -132,11 +132,8 @@ async function resummarizeOneStory(storyId: number) {
 
   if (storyArticles.length === 0) return;
 
-  const titles = storyArticles.map((a) => a.title);
-  const summaries = storyArticles.map((a) => a.summary).filter((s): s is string => s != null);
-
-  const newTitle = storyArticles.length >= 2
-    ? await generateStoryTitle(titles)
+  const result = storyArticles.length >= 2
+    ? await generateStoryTitleAndSummary(storyArticles.map((a, i) => ({ id: i, title: a.title, summary: a.summary })), 'manual_resummarize')
     : null;
 
   const topicCounts = new Map<string, number>();
@@ -149,12 +146,11 @@ async function resummarizeOneStory(storyId: number) {
     .slice(0, 3)
     .map(([t]) => t);
 
-  const titleForSummary = newTitle ?? titles[0];
-  const newSummary = await generateStorySummary(summaries, titleForSummary);
-
   const updates: Record<string, unknown> = {};
-  if (newTitle) updates.title = newTitle;
-  if (newSummary) updates.summary = newSummary;
+  if (result?.coherent) {
+    updates.title = result.title;
+    if (result.summary) updates.summary = result.summary;
+  }
   if (storyTopics.length > 0) updates.topics = storyTopics;
 
   if (Object.keys(updates).length > 0) {
@@ -162,7 +158,7 @@ async function resummarizeOneStory(storyId: number) {
       .update(schema.stories)
       .set(updates)
       .where(eq(schema.stories.id, storyId));
-    logger.info({ storyId, newTitle: newTitle ?? '(kept)', summaryLen: newSummary?.length }, 'Story updated');
+    logger.info({ storyId, newTitle: updates.title ?? '(kept)', hasSummary: 'summary' in updates }, 'Story updated');
   }
 }
 

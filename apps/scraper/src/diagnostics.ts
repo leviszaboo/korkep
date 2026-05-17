@@ -2,7 +2,6 @@ import { sql } from 'drizzle-orm';
 import { db, pool } from './lib/db.js';
 
 async function main() {
-
   const [{ total_articles }] = await db.execute<{ total_articles: number }>(
     sql`SELECT count(*) as total_articles FROM articles`,
   ).then((r) => r.rows ?? [{ total_articles: 0 }]);
@@ -96,6 +95,161 @@ async function main() {
     console.log(`  Avg: ${Number(s.avg_sim).toFixed(4)}`);
     console.log(`  Min: ${Number(s.min_sim).toFixed(4)}`);
     console.log(`  Max: ${Number(s.max_sim).toFixed(4)}`);
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayISO = today.toISOString();
+
+  const todayTotals = await db.execute<{
+    total_requests: number;
+    total_tokens: number;
+    total_prompt_tokens: number;
+    total_completion_tokens: number;
+  }>(
+    sql`SELECT
+      count(*) as total_requests,
+      sum(total_tokens) as total_tokens,
+      sum(prompt_tokens) as total_prompt_tokens,
+      sum(completion_tokens) as total_completion_tokens
+    FROM llm_usage_log
+    WHERE called_at >= ${todayISO}::timestamp with time zone`,
+  );
+
+  const todayRow = (todayTotals.rows ?? [])[0];
+  console.log('\n=== LLM Usage Diagnostics ===\n');
+  console.log(`Date: ${today.toDateString()}`);
+
+  const operationStats = await db.execute<{
+    operation: string;
+    requests: number;
+    total_tokens: number | null;
+    prompt_tokens: number | null;
+    completion_tokens: number | null;
+  }>(
+    sql`SELECT
+      operation,
+      count(*) as requests,
+      sum(total_tokens) as total_tokens,
+      sum(prompt_tokens) as prompt_tokens,
+      sum(completion_tokens) as completion_tokens
+    FROM llm_usage_log
+    WHERE called_at >= ${todayISO}::timestamp with time zone
+    GROUP BY operation
+    ORDER BY requests DESC`,
+  );
+
+  const operations = operationStats.rows ?? [];
+  for (const op of operations) {
+    console.log(`\n--- ${op.operation.charAt(0).toUpperCase() + op.operation.slice(1)} ---`);
+    console.log(`  Requests:           ${op.requests}`);
+    console.log(`  Total tokens:       ${op.total_tokens || 0}`);
+    console.log(`    - Prompt:        ${op.prompt_tokens || 0}`);
+    console.log(`    - Completion:    ${op.completion_tokens || 0}`);
+
+    const opProviders = await db.execute<{
+      provider: string;
+      requests: number;
+      total_tokens: number | null;
+    }>(
+      sql`SELECT
+        provider,
+        count(*) as requests,
+        sum(total_tokens) as total_tokens
+      FROM llm_usage_log
+      WHERE called_at >= ${todayISO}::timestamp with time zone
+        AND operation = ${op.operation}
+      GROUP BY provider
+      ORDER BY requests DESC`,
+    );
+
+    if ((opProviders.rows ?? []).length > 0) {
+      console.log(`  By provider:`);
+      for (const prov of opProviders.rows ?? []) {
+        const pct = op.total_tokens ? (((prov.total_tokens || 0) / (op.total_tokens || 1)) * 100).toFixed(1) : '0.0';
+        console.log(`    ${prov.provider}: ${prov.requests} req, ${prov.total_tokens || 0} tokens (${pct}%)`);
+      }
+    }
+
+    const opModels = await db.execute<{
+      model: string;
+      requests: number;
+      total_tokens: number | null;
+    }>(
+      sql`SELECT
+        model,
+        count(*) as requests,
+        sum(total_tokens) as total_tokens
+      FROM llm_usage_log
+      WHERE called_at >= ${todayISO}::timestamp with time zone
+        AND operation = ${op.operation}
+      GROUP BY model
+      ORDER BY requests DESC`,
+    );
+
+    if ((opModels.rows ?? []).length > 0) {
+      console.log(`  By model:`);
+      for (const model of opModels.rows ?? []) {
+        const pct = op.total_tokens ? (((model.total_tokens || 0) / (op.total_tokens || 1)) * 100).toFixed(1) : '0.0';
+        console.log(`    ${model.model}: ${model.requests} req, ${model.total_tokens || 0} tokens (${pct}%)`);
+      }
+    }
+  }
+
+  // --- By Activity ---
+  const activityStats = await db.execute<{
+    activity: string;
+    requests: number;
+    total_tokens: number | null;
+    prompt_tokens: number | null;
+    completion_tokens: number | null;
+  }>(
+    sql`SELECT
+      activity,
+      count(*) as requests,
+      sum(total_tokens) as total_tokens,
+      sum(prompt_tokens) as prompt_tokens,
+      sum(completion_tokens) as completion_tokens
+    FROM llm_usage_log
+    WHERE called_at >= ${todayISO}::timestamp with time zone
+    GROUP BY activity
+    ORDER BY total_tokens DESC NULLS LAST`,
+  );
+
+  const activities = activityStats.rows ?? [];
+  if (activities.length > 0) {
+    console.log('\n=== LLM Usage by Activity ===');
+    for (const act of activities) {
+      console.log(`\n--- ${act.activity} ---`);
+      console.log(`  Requests:           ${act.requests}`);
+      console.log(`  Total tokens:       ${act.total_tokens || 0}`);
+      console.log(`    - Prompt:        ${act.prompt_tokens || 0}`);
+      console.log(`    - Completion:    ${act.completion_tokens || 0}`);
+
+      const actProviders = await db.execute<{
+        provider: string;
+        requests: number;
+        total_tokens: number | null;
+      }>(
+        sql`SELECT
+          provider,
+          count(*) as requests,
+          sum(total_tokens) as total_tokens
+        FROM llm_usage_log
+        WHERE called_at >= ${todayISO}::timestamp with time zone
+          AND activity = ${act.activity}
+        GROUP BY provider
+        ORDER BY requests DESC`,
+      );
+
+      if ((actProviders.rows ?? []).length > 0) {
+        console.log(`  By provider:`);
+        for (const prov of actProviders.rows ?? []) {
+          const pct = act.total_tokens ? (((prov.total_tokens || 0) / (act.total_tokens || 1)) * 100).toFixed(1) : '0.0';
+          console.log(`    ${prov.provider}: ${prov.requests} req, ${prov.total_tokens || 0} tokens (${pct}%)`);
+        }
+      }
+    }
   }
 
   console.log('');

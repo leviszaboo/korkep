@@ -3,12 +3,14 @@ import { pool } from './lib/db.js';
 import { logger } from './logger.js';
 
 async function main() {
-    logger.info('Starting recluster (keeping existing embeddings)');
+    const startTime = Date.now();
+    logger.info('Recluster-only started (keeping existing embeddings)');
 
-    await runRecluster();
+    await runRecluster('manual_recluster');
 
+    const durationMs = Date.now() - startTime;
     await pool.end();
-    logger.info('Recluster finished, exiting');
+    logger.info({ durationMs }, 'Recluster-only finished');
     process.exit(0);
 }
 

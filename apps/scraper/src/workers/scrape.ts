@@ -11,6 +11,12 @@ import { TwentyFourHuAdapter } from '../adapters/24hu.js';
 import { MandinerAdapter } from '../adapters/mandiner.js';
 import { BlikkAdapter } from '../adapters/blikk.js';
 import { HangAdapter } from '../adapters/hang.js';
+import { EuronewsHuAdapter } from '../adapters/euronews-hu.js';
+import { MetropolAdapter } from '../adapters/metropol.js';
+import { RipostAdapter } from '../adapters/ripost.js';
+import { AtvAdapter } from '../adapters/atv.js';
+import { PortfolioAdapter } from '../adapters/portfolio.js';
+import { VgAdapter } from '../adapters/vg.js';
 import type { BaseAdapter } from '../adapters/base.js';
 import { logger } from '../logger.js';
 
@@ -25,6 +31,12 @@ const adapters: Record<string, BaseAdapter> = {
   mandiner: new MandinerAdapter(),
   blikk: new BlikkAdapter(),
   hang: new HangAdapter(),
+  'euronews-hu': new EuronewsHuAdapter(),
+  metropol: new MetropolAdapter(),
+  ripost: new RipostAdapter(),
+  atv: new AtvAdapter(),
+  portfolio: new PortfolioAdapter(),
+  vg: new VgAdapter(),
 };
 
 export function startScrapeWorker() {
@@ -39,9 +51,32 @@ export function startScrapeWorker() {
         return;
       }
 
-      logger.info({ sourceSlug }, 'Starting scrape');
+      const startTime = Date.now();
+      logger.debug({ sourceSlug }, 'Scrape started');
+
       const articles = await adapter.fetchArticles();
-      logger.info({ sourceSlug, count: articles.length }, 'Fetched articles');
+      const durationMs = Date.now() - startTime;
+      const stats = adapter.getStats();
+
+      const hasDiagnostics = stats.skipped > 0 || stats.fetchFailed > 0 || stats.extractionDegraded > 0;
+      if (hasDiagnostics) {
+        logger.info(
+          {
+            sourceSlug,
+            count: articles.length,
+            durationMs,
+            skipped: stats.skipped,
+            fetchFailed: stats.fetchFailed,
+            degraded: stats.extractionDegraded,
+          },
+          'Scrape completed with diagnostics',
+        );
+      } else {
+        logger.debug(
+          { sourceSlug, count: articles.length, durationMs },
+          'Scrape completed',
+        );
+      }
 
       await processQueue.addBulk(
         articles.map((article) => ({

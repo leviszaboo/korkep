@@ -21,122 +21,184 @@ function tokenOverlap(a: Set<string>, b: Set<string>): number {
   return union > 0 ? shared / union : 0;
 }
 
+function entityOverlap(a: string[], b: string[]): number {
+  if (a.length === 0 || b.length === 0) return 0;
+  const setA = new Set(a.map((e) => e.toLowerCase()));
+  const setB = new Set(b.map((e) => e.toLowerCase()));
+  let shared = 0;
+  for (const e of setA) if (setB.has(e)) shared++;
+  const union = new Set([...setA, ...setB]).size;
+  return union > 0 ? shared / union : 0;
+}
+
+function updateCentroid(
+  current: number[],
+  newVec: number[],
+  count: number,
+): number[] {
+  const result = new Array(current.length);
+  for (let i = 0; i < current.length; i++) {
+    result[i] = (current[i] * count + newVec[i]) / (count + 1);
+  }
+  return result;
+}
+
+function mergeEntities(existing: string[], incoming: string[]): string[] {
+  const set = new Set(existing.map((e) => e.toLowerCase()));
+  const merged = [...existing];
+  for (const e of incoming) {
+    if (!set.has(e.toLowerCase())) {
+      set.add(e.toLowerCase());
+      merged.push(e);
+    }
+  }
+  return merged.slice(0, 15);
+}
+
 export async function assignStory(
   articleTitle: string,
   embedding: number[],
   sourceId: number,
+  articleEntities?: string[] | null,
 ): Promise<number> {
   const cutoff = new Date(Date.now() - CLUSTERING.timeWindowHours * 60 * 60 * 1000);
   const vectorLiteral = `[${embedding.join(',')}]`;
 
-  const similar = await db.execute<{
-    story_id: number | null;
+  const candidates = await db.execute<{
+    id: number;
     title: string;
+    article_count: number;
+    source_count: number;
+    centroid_embedding: string | null;
+    entities: string[] | null;
     created_at: string;
     similarity: number;
   }>(sql`
-    SELECT story_id, title, created_at, 1 - (embedding <=> ${vectorLiteral}::vector) AS similarity
-    FROM articles
-    WHERE embedding IS NOT NULL
-      AND story_id IS NOT NULL
+    SELECT
+      id, title, article_count, source_count,
+      centroid_embedding::text, entities, created_at,
+      1 - (centroid_embedding <=> ${vectorLiteral}::vector) AS similarity
+    FROM stories
+    WHERE centroid_embedding IS NOT NULL
       AND created_at > ${cutoff.toISOString()}
-      AND 1 - (embedding <=> ${vectorLiteral}::vector) > ${CLUSTERING.similarityThreshold}
+      AND 1 - (centroid_embedding <=> ${vectorLiteral}::vector) > ${CLUSTERING.similarityThreshold - 0.05}
     ORDER BY similarity DESC
-    LIMIT 20
+    LIMIT 10
   `);
 
-  const rows = similar.rows ?? [];
+  const rows = candidates.rows ?? [];
+  const newTokens = significantTokens(articleTitle);
+  const newEntities = articleEntities ?? [];
 
-  if (rows.length > 0) {
-    const newTokens = significantTokens(articleTitle);
-    const storyBestSim = new Map<number, number>();
+  let bestStoryId: number | null = null;
+  let bestScore = 0;
 
-    for (const row of rows) {
-      if (row.story_id == null) continue;
+  for (const row of rows) {
+    if (row.article_count >= MAX_CLUSTER_SIZE) continue;
 
-      const candidateTokens = significantTokens(row.title);
-      const overlap = tokenOverlap(newTokens, candidateTokens);
-      const hoursDiff = (Date.now() - new Date(row.created_at).getTime()) / 3_600_000;
-      const decayFactor = Math.exp(-hoursDiff / 24);
-      const overlapFactor = overlap < 0.15 ? 0.8 : overlap < 0.3 ? 0.92 : 1;
-      const adjustedSim = row.similarity * decayFactor * overlapFactor;
+    const hoursDiff = (Date.now() - new Date(row.created_at).getTime()) / 3_600_000;
+    const decayFactor = Math.exp(-hoursDiff / 24);
 
-      const current = storyBestSim.get(row.story_id) ?? 0;
-      if (adjustedSim > current) {
-        storyBestSim.set(row.story_id, adjustedSim);
-      }
-    }
+    const semanticSim = row.similarity * decayFactor;
 
-    let bestStoryId: number | null = null;
-    let bestSim = 0;
-    for (const [storyId, sim] of storyBestSim) {
-      if (sim > bestSim) {
-        bestSim = sim;
-        bestStoryId = storyId;
-      }
-    }
+    const storyEntities = row.entities ?? [];
+    const entOverlap = entityOverlap(newEntities, storyEntities);
 
-    if (bestStoryId != null && bestSim > CLUSTERING.similarityThreshold) {
-      const [existingSources, currentCount, newSourceBias] = await Promise.all([
-        db.execute<{ source_id: number; bias_rating: string }>(sql`
-          SELECT DISTINCT a.source_id, s.bias_rating
-          FROM articles a
-          JOIN sources s ON s.id = a.source_id
-          WHERE a.story_id = ${bestStoryId}
-        `),
-        db.execute<{ cnt: string }>(sql`
-          SELECT COUNT(*)::text AS cnt FROM articles WHERE story_id = ${bestStoryId}
-        `),
-        db.execute<{ bias_rating: string }>(sql`
-          SELECT bias_rating FROM sources WHERE id = ${sourceId} LIMIT 1
-        `),
-      ]);
+    const candidateTokens = significantTokens(row.title);
+    const tokOverlap = tokenOverlap(newTokens, candidateTokens);
 
-      const sourceRows = existingSources.rows ?? [];
-      const articleCount = Number(currentCount.rows?.[0]?.cnt ?? 0);
+    const combinedScore =
+      semanticSim * CLUSTERING.semanticWeight +
+      entOverlap * CLUSTERING.entityOverlapWeight +
+      tokOverlap * CLUSTERING.tokenOverlapWeight;
 
-      if (articleCount >= MAX_CLUSTER_SIZE) {
-        bestStoryId = null;
-      }
+    // Adaptive threshold: larger clusters require stronger matches
+    const sizePenalty = (row.article_count / MAX_CLUSTER_SIZE) * 0.05;
+    const effectiveThreshold = CLUSTERING.similarityThreshold + sizePenalty;
 
-      if (bestStoryId != null) {
-        const sourceIds = new Set(sourceRows.map((r) => r.source_id));
-        const newSourceCount = sourceIds.has(sourceId) ? sourceIds.size : sourceIds.size + 1;
-        const newArticleCount = articleCount + 1;
+    if (combinedScore < effectiveThreshold) continue;
 
-        const biasGroups = new Set(sourceRows.map((r) => normalizeBiasGroup(r.bias_rating)));
-        if (!sourceIds.has(sourceId) && newSourceBias.rows?.[0]) {
-          biasGroups.add(normalizeBiasGroup(newSourceBias.rows[0].bias_rating));
-        }
+    // Coherence check: raw semantic similarity to centroid must stay above floor
+    if (row.similarity < CLUSTERING.minCoherenceSimilarity) continue;
 
-        const relevanceScore = computeRelevanceScore(newSourceCount, newArticleCount, biasGroups.size);
-
-        await db
-          .update(schema.stories)
-          .set({
-            articleCount: sql`article_count + 1`,
-            sourceCount: newSourceCount,
-            relevanceScore,
-            updatedAt: new Date(),
-          })
-          .where(eq(schema.stories.id, bestStoryId));
-
-        return bestStoryId;
-      }
+    if (combinedScore > bestScore) {
+      bestScore = combinedScore;
+      bestStoryId = row.id;
     }
   }
 
+  if (bestStoryId != null) {
+    const bestRow = rows.find((r) => r.id === bestStoryId)!;
+
+    const [existingSources, newSourceBias] = await Promise.all([
+      db.execute<{ source_id: number; bias_rating: string }>(sql`
+        SELECT DISTINCT a.source_id, s.bias_rating
+        FROM articles a
+        JOIN sources s ON s.id = a.source_id
+        WHERE a.story_id = ${bestStoryId}
+      `),
+      db.execute<{ bias_rating: string }>(sql`
+        SELECT bias_rating FROM sources WHERE id = ${sourceId} LIMIT 1
+      `),
+    ]);
+
+    const sourceRows = existingSources.rows ?? [];
+    const sourceIds = new Set(sourceRows.map((r) => r.source_id));
+    const newSourceCount = sourceIds.has(sourceId) ? sourceIds.size : sourceIds.size + 1;
+    const newArticleCount = bestRow.article_count + 1;
+
+    const biasGroups = new Set(sourceRows.map((r) => normalizeBiasGroup(r.bias_rating)));
+    if (!sourceIds.has(sourceId) && newSourceBias.rows?.[0]) {
+      biasGroups.add(normalizeBiasGroup(newSourceBias.rows[0].bias_rating));
+    }
+
+    const relevanceScore = computeRelevanceScore(newSourceCount, newArticleCount, biasGroups.size);
+
+    // Update centroid incrementally
+    const currentCentroid = bestRow.centroid_embedding
+      ? parsePgVector(bestRow.centroid_embedding)
+      : embedding;
+    const newCentroid = updateCentroid(currentCentroid, embedding, bestRow.article_count);
+    const centroidLiteral = `[${newCentroid.join(',')}]`;
+
+    const updatedEntities = mergeEntities(bestRow.entities ?? [], newEntities);
+
+    await db
+      .update(schema.stories)
+      .set({
+        articleCount: sql`article_count + 1`,
+        sourceCount: newSourceCount,
+        relevanceScore,
+        centroidEmbedding: sql`${centroidLiteral}::vector`,
+        entities: updatedEntities.length > 0 ? updatedEntities : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.stories.id, bestStoryId));
+
+    return bestStoryId;
+  }
+
+  // No match — create new story with this article's embedding as initial centroid
   const [newStory] = await db
     .insert(schema.stories)
     .values({
-      title: articleTitle, // This is now the LLM-generated headline from the summarizer
+      title: articleTitle,
       articleCount: 1,
       sourceCount: 1,
       relevanceScore: computeRelevanceScore(1, 1, 1),
+      centroidEmbedding: sql`${vectorLiteral}::vector`,
+      entities: newEntities.length > 0 ? newEntities : null,
     })
     .returning({ id: schema.stories.id });
 
   return newStory.id;
+}
+
+function parsePgVector(str: string): number[] {
+  return str
+    .replace(/^\[|\]$/g, '')
+    .split(',')
+    .map(Number);
 }
 
 function normalizeBiasGroup(biasRating: string): string {

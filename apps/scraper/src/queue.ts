@@ -31,3 +31,12 @@ export const reclusterQueue = new Queue('recluster', {
     removeOnFail: { age: 604800 },
   },
 });
+
+export const repairQueue = new Queue('repair', {
+  connection,
+  defaultJobOptions: {
+    attempts: 1,
+    removeOnComplete: { age: 86400 },
+    removeOnFail: { age: 604800 },
+  },
+});

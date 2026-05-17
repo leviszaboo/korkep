@@ -4,6 +4,7 @@ import { db, schema } from '../lib/db.js';
 import { getEmbeddingsBatch } from '../processors/embedder.js';
 import { analyzeArticleViaOpenRouter } from '../processors/summarizer.js';
 import { assignStory } from '../processors/clusterer.js';
+import type { LlmActivity } from '../lib/llm-usage.js';
 import { logger } from '../logger.js';
 
 const BATCH_SIZE = 50;
@@ -28,7 +29,7 @@ interface BackfillRow {
   publishedAt: Date | null;
 }
 
-async function analyzeBatch(rows: BackfillRow[]): Promise<void> {
+async function analyzeBatch(rows: BackfillRow[], activity: LlmActivity): Promise<void> {
   const needsAnalysis = rows.filter((r) => !r.summary);
   if (needsAnalysis.length === 0) return;
 
@@ -46,7 +47,7 @@ async function analyzeBatch(rows: BackfillRow[]): Promise<void> {
         running++;
 
         const article = needsAnalysis[i];
-        analyzeArticleViaOpenRouter(article.title, article.body, article.lead)
+        analyzeArticleViaOpenRouter(article.title, article.body, article.lead, activity)
           .then((result) => {
             if (result) {
               article.summary = result.summary;
@@ -122,7 +123,7 @@ async function processArticles(
                     let storyId: number | null = null;
                     if (article.articleType !== 'aggregation') {
                       try {
-                          storyId = await assignStory(article.title, embedding, article.sourceId);
+                          storyId = await assignStory(article.title, embedding, article.sourceId, article.entities);
                       } catch (err) {
                           logger.error({ err, url: article.url }, 'Clustering failed during backfill');
                       }
@@ -167,7 +168,7 @@ async function processArticles(
     return { processed, failed };
 }
 
-export async function runBackfill() {
+export async function runBackfill(activity: LlmActivity = 'manual_reembed') {
     logger.info('Starting embedding backfill (with analysis)');
 
     let totalProcessed = 0;
@@ -200,7 +201,7 @@ export async function runBackfill() {
         if (rows.length === 0) break;
 
         // Step 1: Analyze articles that don't have structured data yet
-        await analyzeBatch(rows);
+        await analyzeBatch(rows, activity);
 
         // Step 2: Generate embeddings using structured fields
         const texts = rows.map((a) =>
@@ -222,7 +223,7 @@ export async function runBackfill() {
 
         let embeddings: number[][];
         try {
-            embeddings = await getEmbeddingsBatch(texts);
+            embeddings = await getEmbeddingsBatch(texts, activity);
         } catch (err) {
             totalFailed += rows.length;
             logger.error({ err, count: rows.length }, 'Batch embedding failed, skipping batch');
@@ -240,13 +241,13 @@ export async function runBackfill() {
     logger.info({ totalProcessed, totalFailed }, 'Backfill complete');
 }
 
-export async function runFullRecluster() {
+export async function runFullRecluster(activity: LlmActivity = 'manual_reembed') {
     logger.info('Starting full re-embed and recluster');
 
     await db.update(schema.articles).set({ storyId: null, embedding: null });
     await db.delete(schema.stories);
     logger.info('Cleared all stories and embeddings');
 
-    await runBackfill();
+    await runBackfill(activity);
     logger.info('Full recluster complete');
 }

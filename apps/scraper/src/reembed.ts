@@ -4,13 +4,14 @@ import { pool } from './lib/db.js';
 import { logger } from './logger.js';
 
 async function main() {
-    logger.info('Starting full recluster');
-    logger.info({ model: config.openrouter.model }, 'Config');
+    const startTime = Date.now();
+    logger.info({ model: config.openrouter.model }, 'Full re-embed started');
 
-    await runFullRecluster();
+    await runFullRecluster('manual_reembed');
 
+    const durationMs = Date.now() - startTime;
     await pool.end();
-    logger.info('Recluster finished, exiting');
+    logger.info({ durationMs }, 'Full re-embed finished');
     process.exit(0);
 }
 

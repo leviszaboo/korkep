@@ -1,15 +1,13 @@
+import { OpenRouter } from '@openrouter/sdk';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
+import { logLlmUsage, type LlmActivity } from '../lib/llm-usage.js';
 
-interface OpenRouterEmbedResponse {
-  data: Array<{ embedding: number[]; index: number }>;
-  model: string;
-  usage: { prompt_tokens: number; total_tokens: number };
-}
+const openrouter = new OpenRouter({ apiKey: config.openrouter.apiKey });
 
 const MAX_RETRIES = 3;
 
-async function callOpenRouter(texts: string[]): Promise<number[][]> {
+async function callOpenRouter(texts: string[], activity: LlmActivity = 'scrape_embed'): Promise<number[][]> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -19,28 +17,31 @@ async function callOpenRouter(texts: string[]): Promise<number[][]> {
     }
 
     try {
-      const res = await fetch('https://openrouter.ai/api/v1/embeddings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.openrouter.apiKey}`,
-        },
-        body: JSON.stringify({
+      const response = await openrouter.embeddings.generate({
+        requestBody: {
           model: config.openrouter.model,
           input: texts,
-          encoding_format: 'float',
+          encodingFormat: 'float',
           dimensions: config.openrouter.dimensions,
-        }),
-        signal: AbortSignal.timeout(60_000),
+        },
       });
 
-      if (!res.ok) {
-        throw new Error(`OpenRouter returned ${res.status}: ${await res.text()}`);
+      if (typeof response === 'string') {
+        throw new Error(`Unexpected string response from OpenRouter embeddings`);
       }
 
-      const data = (await res.json()) as OpenRouterEmbedResponse;
-      const sorted = data.data.sort((a, b) => a.index - b.index);
-      return sorted.map((d) => d.embedding);
+      const promptTokens = (response as any).usage?.prompt_tokens ?? (response as any).usage?.promptTokens;
+      logLlmUsage({
+        provider: 'openrouter',
+        model: config.openrouter.model,
+        operation: 'embedding',
+        activity,
+        promptTokens,
+        completionTokens: 0,
+      });
+
+      const sorted = response.data.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      return sorted.map((d) => d.embedding as number[]);
     } catch (err) {
       lastError = err;
       logger.warn({ err, attempt: attempt + 1, texts: texts.length }, 'OpenRouter call failed, retrying');
@@ -53,14 +54,14 @@ async function callOpenRouter(texts: string[]): Promise<number[][]> {
 const SUB_BATCH_SIZE = 20;
 const MAX_CONCURRENCY = 15;
 
-export async function getEmbedding(text: string): Promise<number[]> {
-  const [embedding] = await callOpenRouter([text]);
+export async function getEmbedding(text: string, activity: LlmActivity = 'scrape_embed'): Promise<number[]> {
+  const [embedding] = await callOpenRouter([text], activity);
   return embedding;
 }
 
-export async function getEmbeddingsBatch(texts: string[]): Promise<number[][]> {
+export async function getEmbeddingsBatch(texts: string[], activity: LlmActivity = 'scrape_embed'): Promise<number[][]> {
   if (texts.length === 0) return [];
-  if (texts.length <= SUB_BATCH_SIZE) return callOpenRouter(texts);
+  if (texts.length <= SUB_BATCH_SIZE) return callOpenRouter(texts, activity);
 
   const chunks: string[][] = [];
   for (let i = 0; i < texts.length; i += SUB_BATCH_SIZE) {
@@ -79,7 +80,7 @@ export async function getEmbeddingsBatch(texts: string[]): Promise<number[][]> {
         const idx = nextChunk++;
         running++;
 
-        callOpenRouter(chunks[idx])
+        callOpenRouter(chunks[idx], activity)
           .then((embeddings) => {
             results[idx] = embeddings;
             running--;
@@ -108,14 +109,15 @@ export async function getEmbeddingsBatch(texts: string[]): Promise<number[][]> {
 class EmbeddingBatcher {
   private pending: Array<{
     text: string;
+    activity: LlmActivity;
     resolve: (embedding: number[]) => void;
     reject: (err: unknown) => void;
   }> = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
 
-  embed(text: string): Promise<number[]> {
+  embed(text: string, activity: LlmActivity = 'scrape_embed'): Promise<number[]> {
     return new Promise((resolve, reject) => {
-      this.pending.push({ text, resolve, reject });
+      this.pending.push({ text, activity, resolve, reject });
       if (this.pending.length >= 10) {
         this.flush();
       } else if (!this.timer) {
@@ -132,7 +134,8 @@ class EmbeddingBatcher {
     const batch = this.pending.splice(0);
     if (batch.length === 0) return;
 
-    getEmbeddingsBatch(batch.map((b) => b.text))
+    const activity = batch[0].activity;
+    getEmbeddingsBatch(batch.map((b) => b.text), activity)
       .then((embeddings) => {
         for (let i = 0; i < batch.length; i++) {
           batch[i].resolve(embeddings[i]);

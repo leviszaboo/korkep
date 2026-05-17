@@ -13,16 +13,24 @@ export const config = {
     dimensions: parseInt(process.env.EMBEDDING_DIMENSIONS ?? '1024', 10),
   },
   summarizer: {
-    model: process.env.SUMMARIZER_MODEL ?? 'google/gemini-2.5-flash-lite',
-    openrouterModel: process.env.SUMMARIZER_OPENROUTER_MODEL ?? 'google/gemini-2.5-flash-lite',
+    model: process.env.SUMMARIZER_MODEL ?? 'google/gemma-4-26b-a4b-it',
+    openrouterModel: process.env.SUMMARIZER_OPENROUTER_MODEL ?? 'google/gemma-4-26b-a4b-it',
+    storyModel: process.env.STORY_MODEL_OVERRIDE ?? process.env.STORY_MODEL ?? 'google/gemma-4-31b-it',
+  },
+  recluster: {
+    reclusterFrequencyMinutes: parseInt(process.env.RECLUSTER_FREQUENCY_MINUTES ?? '30', 10),
+    noCache: process.env.RECLUSTER_NO_CACHE === '1' || process.env.RECLUSTER_NO_CACHE === 'true',
+    forceOpenRouter: process.env.FORCE_OPENROUTER === '1' || process.env.FORCE_OPENROUTER === 'true',
+    postMergeThreshold: parseFloat(process.env.RECLUSTER_MERGE_THRESHOLD ?? '0.90'),
+    postMergeMaxSize: parseInt(process.env.RECLUSTER_MERGE_MAX_SIZE ?? '24', 10),
   },
   googleAiStudio: {
     apiKey: process.env.GOOGLE_AI_STUDIO_API_KEY ?? '',
-    model: process.env.GOOGLE_AI_STUDIO_MODEL ?? 'gemini-2.5-flash-lite',
+    model: process.env.GOOGLE_AI_STUDIO_MODEL ?? 'gemma-4-26b-a4b-it',
     maxPerMinute: 14,
     maxPerDay: 1450,
   },
-  clusterer: {
-    url: process.env.CLUSTERER_URL ?? 'http://localhost:8101',
+  batchClusterer: {
+    url: process.env.BATCH_CLUSTERER_URL ?? 'http://localhost:8101',
   },
 } as const;

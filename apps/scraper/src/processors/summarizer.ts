@@ -1,8 +1,21 @@
 import type { ArticleAnalysis } from '@korkep/shared';
 import { TOPICS } from '@korkep/shared';
+import { GoogleGenAI } from '@google/genai';
+import { OpenRouter } from '@openrouter/sdk';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
+import { logLlmUsage, type LlmActivity } from '../lib/llm-usage.js';
 import { Redis } from 'ioredis';
+
+// ---------------------------------------------------------------------------
+// SDK clients
+// ---------------------------------------------------------------------------
+
+const gemini = config.googleAiStudio.apiKey
+  ? new GoogleGenAI({ apiKey: config.googleAiStudio.apiKey })
+  : null;
+
+const openrouter = new OpenRouter({ apiKey: config.openrouter.apiKey });
 
 // ---------------------------------------------------------------------------
 // Rate limiter for Google AI Studio (15 req/min, 1500 req/day free tier)
@@ -31,7 +44,6 @@ async function acquireRateSlot(): Promise<'ok' | 'daily_exhausted'> {
     return 'daily_exhausted';
   }
 
-  // Sliding window per-minute check using a sorted set
   const pipe = r.pipeline();
   pipe.zremrangebyscore(REDIS_KEY_MINUTE, 0, now - minuteWindow);
   pipe.zcard(REDIS_KEY_MINUTE);
@@ -67,20 +79,6 @@ async function acquireRateSlot(): Promise<'ok' | 'daily_exhausted'> {
 // Shared prompt logic
 // ---------------------------------------------------------------------------
 
-interface OpenRouterChatResponse {
-  choices: Array<{
-    message: { content: string };
-  }>;
-  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
-}
-
-interface GeminiResponse {
-  candidates?: Array<{
-    content: { parts: Array<{ text: string }> };
-  }>;
-  usageMetadata?: { promptTokenCount: number; candidatesTokenCount: number; totalTokenCount: number };
-}
-
 const MAX_RETRIES = 2;
 const MAX_INPUT_CHARS = 2000;
 
@@ -97,7 +95,7 @@ Válaszolj KIZÁRÓLAG az alábbi JSON formátumban, semmilyen más szöveget ne
   "articleType": "event | aggregation | opinion | background",
   "location": "Helyszín (város/ország/régió) vagy null ha nem releváns",
   "entities": ["Legfontosabb személyek, szervezetek, intézmények (max 5)"],
-  "topics": ["Témakörök az alábbi listából (1-3): ${TOPICS_LIST}"]
+  "topics": ["Témakörök az alábbi listából (1-2): ${TOPICS_LIST}"]
 }
 
 SZABÁLYOK a storyIdentity mezőhöz:
@@ -126,14 +124,17 @@ function buildUserPrompt(title: string, body: string | null, lead: string | null
 }
 
 // ---------------------------------------------------------------------------
-// Google AI Studio (Gemini native API)
+// Google AI Studio (via @google/genai SDK)
 // ---------------------------------------------------------------------------
 
 async function callGeminiNative(
   systemPrompt: string,
   userPrompt: string,
   jsonMode = false,
+  activity: LlmActivity = 'scrape_summarize',
 ): Promise<string> {
+  if (!gemini) throw new Error('Gemini client not configured');
+
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -142,51 +143,38 @@ async function callGeminiNative(
     }
 
     try {
-      const body: Record<string, unknown> = {
-        system_instruction: {
-          parts: [{ text: systemPrompt }],
-        },
-        contents: [
-          {
-            parts: [{ text: userPrompt }],
-          },
-        ],
-        generationConfig: {
+      const response = await gemini.models.generateContent({
+        model: config.googleAiStudio.model,
+        contents: userPrompt,
+        config: {
+          systemInstruction: systemPrompt,
           temperature: 0.3,
           maxOutputTokens: 500,
           ...(jsonMode && { responseMimeType: 'application/json' }),
         },
-      };
-
-      const model = config.googleAiStudio.model;
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': config.googleAiStudio.apiKey,
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(30_000),
       });
 
-      if (!res.ok) {
-        throw new Error(`Gemini API returned ${res.status}: ${await res.text()}`);
-      }
-
-      const data = (await res.json()) as GeminiResponse;
-      const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      const content = response.text;
       if (!content) {
         throw new Error('Empty response from Gemini API');
       }
 
-      if (data.usageMetadata) {
-        logger.debug(
-          { promptTokens: data.usageMetadata.promptTokenCount, completionTokens: data.usageMetadata.candidatesTokenCount },
-          'Gemini token usage',
-        );
-      }
+      const promptTokens = response.usageMetadata?.promptTokenCount;
+      const completionTokens = response.usageMetadata?.candidatesTokenCount;
+
+      logger.info(
+        { provider: 'gemini', model: config.googleAiStudio.model, promptTokens, completionTokens },
+        'LLM call completed',
+      );
+
+      logLlmUsage({
+        provider: 'gemini',
+        model: config.googleAiStudio.model,
+        operation: 'chat',
+        activity,
+        promptTokens,
+        completionTokens,
+      });
 
       return content;
     } catch (err) {
@@ -199,7 +187,7 @@ async function callGeminiNative(
 }
 
 // ---------------------------------------------------------------------------
-// OpenRouter API (OpenAI-compatible)
+// OpenRouter API (via @openrouter/sdk)
 // ---------------------------------------------------------------------------
 
 async function callOpenRouterChat(
@@ -207,6 +195,7 @@ async function callOpenRouterChat(
   userPrompt: string,
   jsonMode = false,
   model?: string,
+  activity: LlmActivity = 'scrape_summarize',
 ): Promise<string> {
   let lastError: unknown;
 
@@ -216,45 +205,41 @@ async function callOpenRouterChat(
     }
 
     try {
-      const body: Record<string, unknown> = {
-        model: model ?? config.summarizer.openrouterModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.3,
-        max_tokens: 500,
-      };
-      if (jsonMode) {
-        body.response_format = { type: 'json_object' };
-      }
-
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.openrouter.apiKey}`,
+      const response = await openrouter.chat.send({
+        chatRequest: {
+          model: model ?? config.summarizer.openrouterModel,
+          messages: [
+            { role: 'system' as const, content: systemPrompt },
+            { role: 'user' as const, content: userPrompt },
+          ],
+          temperature: 0.3,
+          maxTokens: 500,
+          ...(jsonMode && { responseFormat: { type: 'json_object' as const } }),
         },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(30_000),
       });
 
-      if (!res.ok) {
-        throw new Error(`OpenRouter chat returned ${res.status}: ${await res.text()}`);
-      }
-
-      const data = (await res.json()) as OpenRouterChatResponse;
-      const content = data.choices?.[0]?.message?.content;
-      if (!content) {
+      const content = response.choices?.[0]?.message?.content;
+      if (!content || typeof content !== 'string') {
         throw new Error('Empty response from OpenRouter chat');
       }
 
-      if ((data as any).usage) {
-        logger.debug(
-          { promptTokens: (data as any).usage.prompt_tokens, completionTokens: (data as any).usage.completion_tokens },
-          'OpenRouter token usage',
-        );
-      }
+      const usedModel = model ?? config.summarizer.openrouterModel;
+      const promptTokens = response.usage?.promptTokens;
+      const completionTokens = response.usage?.completionTokens;
+
+      logger.info(
+        { provider: 'openrouter', model: usedModel, promptTokens, completionTokens },
+        'LLM call completed',
+      );
+
+      logLlmUsage({
+        provider: 'openrouter',
+        model: usedModel,
+        operation: 'chat',
+        activity,
+        promptTokens,
+        completionTokens,
+      });
 
       return content;
     } catch (err) {
@@ -314,35 +299,42 @@ function parseAnalysisResponse(raw: string): ArticleAnalysis {
 // ---------------------------------------------------------------------------
 
 /**
- * Analyze an article using Google AI Studio (rate-limited, free tier).
- * Falls back to OpenRouter if the daily Gemini quota is exhausted
- * or if no Google AI Studio API key is configured.
+ * Analyze an article on the fly.
+ * Strategy: try Gemini API first (rate-limited). If rate limited, empty response,
+ * or error after retries, fall back to OpenRouter.
  */
 export async function analyzeArticle(
   title: string,
   body: string | null,
   lead: string | null,
+  activity: LlmActivity = 'scrape_summarize',
 ): Promise<ArticleAnalysis | null> {
   const contentLength = (lead?.length ?? 0) + (body?.length ?? 0);
   if (contentLength < 50) {
-    logger.debug({ title }, 'Article too short to analyze, skipping');
+    logger.info({ title }, 'Article too short to analyze, skipping');
     return null;
   }
 
   try {
     const userPrompt = buildUserPrompt(title, body, lead);
-    let raw: string;
+    let raw: string | null = null;
+    logger.info({ title, contentLength }, 'Analyzing article via LLM');
 
-    if (config.googleAiStudio.apiKey) {
+    if (gemini) {
       const slot = await acquireRateSlot();
       if (slot === 'ok') {
-        raw = await callGeminiNative(SYSTEM_PROMPT, userPrompt, true);
+        try {
+          raw = await callGeminiNative(SYSTEM_PROMPT, userPrompt, true, activity);
+        } catch (err) {
+          logger.warn({ err, title }, 'Gemini failed after retries, falling back to OpenRouter');
+        }
       } else {
         logger.info('Gemini daily limit exhausted, falling back to OpenRouter');
-        raw = await callOpenRouterChat(SYSTEM_PROMPT, userPrompt, true);
       }
-    } else {
-      raw = await callOpenRouterChat(SYSTEM_PROMPT, userPrompt, true);
+    }
+
+    if (!raw) {
+      raw = await callOpenRouterChat(SYSTEM_PROMPT, userPrompt, true, undefined, activity);
     }
 
     return parseAnalysisResponse(raw);
@@ -360,6 +352,7 @@ export async function analyzeArticleViaOpenRouter(
   title: string,
   body: string | null,
   lead: string | null,
+  activity: LlmActivity = 'scrape_summarize',
 ): Promise<ArticleAnalysis | null> {
   const contentLength = (lead?.length ?? 0) + (body?.length ?? 0);
   if (contentLength < 50) {
@@ -369,7 +362,7 @@ export async function analyzeArticleViaOpenRouter(
 
   try {
     const userPrompt = buildUserPrompt(title, body, lead);
-    const raw = await callOpenRouterChat(SYSTEM_PROMPT, userPrompt, true);
+    const raw = await callOpenRouterChat(SYSTEM_PROMPT, userPrompt, true, undefined, activity);
     return parseAnalysisResponse(raw);
   } catch (err) {
     logger.error({ err, title }, 'Article analysis failed (OpenRouter)');
@@ -402,54 +395,110 @@ function extractPlainText(raw: string): string {
     .trim();
 }
 
-export async function generateStoryTitle(articleTitles: string[]): Promise<string | null> {
-  if (articleTitles.length === 0) return null;
-  if (articleTitles.length === 1) return null;
+export type StoryTitleResult =
+  | { coherent: true; title: string; summary: string | null }
+  | { coherent: false; groups: number[][] };
 
-  const prompt = `Az alábbi magyar hírforrásokból származó cikkek ugyanarról az eseményről/történetről szólnak.
-Írj egy semleges, tömör főcímet, amely összefoglalja a történetet (max 15 szó).
-A főcím ne favorizáljon egyetlen forrást sem, legyen tényszerű.
+export async function generateStoryTitleAndSummary(
+  articles: { id: number; title: string; summary: string | null }[],
+  activity: LlmActivity = 'scrape_summarize',
+): Promise<StoryTitleResult | null> {
+  if (articles.length === 0) return null;
+  if (articles.length === 1) return null;
 
-Válaszolj KIZÁRÓLAG a főcímmel, semmilyen más szöveget ne írj.
+  const articleList = articles.map((a, i) => {
+    const summary = a.summary ?? a.title;
+    return `${i + 1}. [${a.title}] ${summary}`;
+  }).join('\n');
+
+  const prompt = `Az alábbi magyar hírforrásokból származó cikkeket egy klaszterbe soroltuk, mert hasonlóak.
+Döntsd el, hogy VALÓBAN ugyanarról a KONKRÉT történetről/eseményről szólnak-e.
+
+FONTOS: "ugyanaz a téma" NEM jelenti, hogy "ugyanaz a történet"!
+- Különböző idős emberek elleni csalások = KÜLÖNBÖZŐ történetek, még ha mindegyik "idős ember + csalás"
+- Különböző celebekről szóló interjúk = KÜLÖNBÖZŐ történetek, még ha mindegyik "celeb + magánélet"
+- Különböző közlekedési balesetek = KÜLÖNBÖZŐ történetek, még ha mindegyik "baleset + autópálya"
+- Különböző katonai műveletek = KÜLÖNBÖZŐ történetek, még ha mindegyik "Közel-Kelet + hadsereg"
+- Különböző környezeti/társadalmi problémák = KÜLÖNBÖZŐ történetek, még ha mindegyik "válság + klíma"
+Csak akkor koherens, ha a cikkek UGYANAZT az egy konkrét eseményt/döntést/történést írják le más-más forrásból.
+
+Ha IGEN (koherens klaszter):
+- Írj egy semleges, tömör főcímet (max 15 szó)
+- Írj egy 2-3 mondatos semleges összefoglalót, amely szintetizálja a különböző források információit
+- FONTOS: Nyelvtanilag hibátlan, helyes magyar nyelven fogalmazz
+
+Ha NEM (a cikkek különböző történetekről szólnak):
+- Oszd csoportokra a cikkeket úgy, hogy minden csoport egy-egy önálló történetet képviseljen
+- Használd a cikkek sorszámát a csoportosításhoz
+- Ha egy cikk egyedül áll (nem tartozik másikhoz), tedd egyedül egy csoportba, pl. [[1], [2, 3]]
+
+Válaszolj KIZÁRÓLAG az alábbi JSON formátumban:
+Koherens: {"coherent": true, "title": "Főcím", "summary": "Összefoglaló"}
+Inkoherens: {"coherent": false, "groups": [[1, 3], [2, 4]]}
 
 Cikkek:
-${articleTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
+${articleList}`;
 
   try {
-    const raw = await callOpenRouterChat(
-      'Egy magyar hírösszefoglaló rendszer vagy. A válaszod legyen KIZÁRÓLAG a kért főcím, semmilyen más szöveg.',
-      prompt,
-    );
-    return extractPlainText(raw) || null;
-  } catch (err) {
-    logger.error({ err }, 'Story title generation failed');
+    const storySystemPrompt = 'Egy magyar hírösszefoglaló rendszer vagy. Válaszolj KIZÁRÓLAG a kért JSON formátumban, semmilyen más szöveget ne írj.';
+    let raw: string | null = null;
+
+    if (!config.recluster.forceOpenRouter && gemini) {
+      const slot = await acquireRateSlot();
+      if (slot === 'ok') {
+        try {
+          raw = await callGeminiNative(storySystemPrompt, prompt, true, activity);
+        } catch (err) {
+          logger.warn({ err }, 'Gemini failed for story title, falling back to OpenRouter');
+        }
+      } else {
+        logger.info('Gemini daily limit exhausted for story titles, falling back to OpenRouter');
+      }
+    }
+
+    if (!raw) {
+      raw = await callOpenRouterChat(
+        storySystemPrompt,
+        prompt,
+        true,
+        config.summarizer.storyModel,
+        activity,
+      );
+    }
+
+    const jsonMatch = raw.trim().match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    if (parsed.coherent === true && typeof parsed.title === 'string') {
+      const summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : null;
+      return { coherent: true, title: parsed.title.trim(), summary };
+    }
+
+    if (parsed.coherent === false && Array.isArray(parsed.groups)) {
+      const groups: number[][] = parsed.groups.map((g: unknown[]) =>
+        g.map((idx) => {
+          const i = (typeof idx === 'number' ? idx : parseInt(String(idx), 10)) - 1;
+          return articles[i]?.id;
+        }).filter((id): id is number => id != null),
+      );
+      const validGroups = groups.filter((g) => g.length > 0);
+      if (validGroups.length >= 2) {
+        return { coherent: false, groups: validGroups };
+      }
+    }
+
+    // Fallback: treat as coherent with extracted title
+    const title = parsed.title ?? parsed.headline;
+    if (typeof title === 'string' && title.trim()) {
+      const summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : null;
+      return { coherent: true, title: title.trim(), summary };
+    }
+
     return null;
-  }
-}
-
-export async function generateStorySummary(
-  articleSummaries: string[],
-  storyTitle: string,
-): Promise<string | null> {
-  if (articleSummaries.length === 0) return null;
-  if (articleSummaries.length === 1) return extractPlainText(articleSummaries[0]);
-
-  const prompt = `Az alábbi összefoglalók ugyanarról a történetről szólnak: "${storyTitle}"
-
-Írj egy semleges, tényszerű, 2-3 mondatos összefoglalót, amely szintetizálja a különböző forrásokból származó információkat.
-Válaszolj KIZÁRÓLAG az összefoglalóval, semmilyen más szöveget ne írj.
-
-Összefoglalók:
-${articleSummaries.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
-
-  try {
-    const raw = await callOpenRouterChat(
-      'Egy magyar hírösszefoglaló rendszer vagy. A válaszod legyen KIZÁRÓLAG a kért összefoglaló, semmilyen más szöveg.',
-      prompt,
-    );
-    return extractPlainText(raw) || null;
   } catch (err) {
-    logger.error({ err }, 'Story summary generation failed');
+    logger.error({ err }, 'Story title/summary generation failed');
     return null;
   }
 }
