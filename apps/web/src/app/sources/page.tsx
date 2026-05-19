@@ -54,18 +54,18 @@ export default async function SourcesPage() {
             href={source.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="group flex items-center justify-between border-b border-border p-4 transition-all hover:bg-surface"
+            className="group flex flex-col items-center justify-center gap-3 border-b border-border p-4 text-center transition-all hover:bg-surface sm:flex-row sm:justify-between sm:text-left"
           >
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 flex-col items-center gap-3 sm:flex-row">
               <SourceLogo name={source.name} logoUrl={source.logoUrl} />
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-2.5">
+              <div className="flex min-w-0 flex-col items-center gap-1 sm:items-start">
+                <div className="flex flex-wrap items-center justify-center gap-2.5 sm:justify-start">
                   <span className="text-base font-medium text-foreground group-hover:text-accent transition-colors">
                     {source.name}
                   </span>
                   <BiasBadge rating={source.biasRating} />
                 </div>
-                <span className="text-xs text-faint">{source.url.replace(/^https?:\/\//, '')}</span>
+                <span className="max-w-full break-all text-xs text-faint">{source.url.replace(/^https?:\/\//, '')}</span>
               </div>
             </div>
 

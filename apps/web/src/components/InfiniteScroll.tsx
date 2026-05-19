@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import type { Story } from '@/lib/types';
-import { loadMoreStories } from '@/lib/actions';
+import { getStoriesClient } from '@/lib/client-api';
 import { StoryCard } from './StoryCard';
 
 interface Props {
@@ -39,9 +39,9 @@ export function InfiniteScroll({ initialPage, totalPages, topic, sort, since }: 
 
         const nextPage = currentPage + 1;
         const sortMode = sort === 'latest' ? ('latest' as const) : ('relevance' as const);
-        loadMoreStories(nextPage, 20, topic, sortMode, since)
-          .then(({ stories }) => {
-            setExtra((prev) => [...prev, ...stories]);
+        getStoriesClient(nextPage, 20, topic, sortMode, since)
+          .then((result) => {
+            setExtra((prev) => [...prev, ...result.data]);
             setPage(nextPage);
           })
           .finally(() => {

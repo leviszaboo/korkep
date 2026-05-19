@@ -30,7 +30,7 @@ function PendingOverlay({ children }: { children: React.ReactNode }) {
 
 function StoriesSkeleton() {
   return (
-    <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_280px]">
+    <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_340px]">
       <div className="flex flex-col gap-10">
         <HeroSkeleton />
         <TrendingStripSkeleton />
@@ -40,7 +40,7 @@ function StoriesSkeleton() {
           ))}
         </div>
       </div>
-      <div className="hidden lg:block">
+      <div className="hidden xl:block">
         <div className="flex flex-col gap-4">
           <div className="h-4 w-24 animate-pulse rounded bg-elevated" />
           {Array.from({ length: 8 }).map((_, i) => (

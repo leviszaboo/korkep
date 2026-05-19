@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import type { RefObject } from 'react';
 import { useRef, useState, useEffect } from 'react';
 import { TulipLogo } from './FolkPattern';
 
@@ -17,7 +18,8 @@ export function Header() {
   const isSearchPage = pathname === '/search';
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
+  const desktopInputRef = useRef<HTMLInputElement>(null);
+  const mobileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(null);
 
   const urlQuery = searchParams.get('q') ?? '';
@@ -32,7 +34,11 @@ export function Header() {
 
   function openSearch() {
     setSearchOpen(true);
-    setTimeout(() => inputRef.current?.focus(), 0);
+    setTimeout(() => {
+      const desktop = window.matchMedia('(min-width: 640px)').matches;
+      const input = desktop ? desktopInputRef.current : mobileInputRef.current;
+      input?.focus({ preventScroll: true });
+    }, 0);
   }
 
   function closeSearch() {
@@ -59,6 +65,29 @@ export function Header() {
     }
   }
 
+  function renderSearchForm(ref: RefObject<HTMLInputElement | null>) {
+    return (
+    <div className="flex items-center gap-2">
+      <div className="relative min-w-0 flex-1 sm:flex-none">
+        <SearchNavIcon className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+        <input
+          ref={ref}
+          type="text"
+          value={query}
+          onChange={(e) => handleInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={() => { if (!query && !isSearchPage) closeSearch(); }}
+          placeholder="Search stories..."
+          className="w-full rounded-lg border border-border bg-base py-2 pl-10 pr-3 text-base text-foreground placeholder:text-faint transition-all focus:border-border-focus focus:outline-none sm:w-56 sm:py-1.5 sm:pl-8 sm:text-sm sm:focus:w-64"
+        />
+      </div>
+      <button onClick={closeSearch} className="rounded-md p-2 text-muted transition-colors hover:text-foreground sm:p-1.5" aria-label="Close search">
+        <CloseIcon />
+      </button>
+    </div>
+    );
+  }
+
   return (
     <header className="sticky top-0 z-50 border-b-2 border-foreground bg-base/80 backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-[1400px] items-center justify-between px-4 sm:px-6">
@@ -73,27 +102,10 @@ export function Header() {
 
         <div className="flex items-center gap-1">
           {showSearch ? (
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <SearchNavIcon className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={query}
-                  onChange={(e) => handleInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  onBlur={() => { if (!query) closeSearch(); }}
-                  placeholder="Search stories..."
-                  className="w-48 rounded-lg border border-border bg-base py-1.5 pl-8 pr-3 text-sm text-foreground placeholder:text-faint transition-all focus:w-64 focus:border-border-focus focus:outline-none sm:w-56"
-                />
-              </div>
-              <button onClick={closeSearch} className="rounded-md p-1.5 text-muted hover:text-foreground transition-colors">
-                <CloseIcon />
-              </button>
-            </div>
+            <div className="hidden sm:block">{renderSearchForm(desktopInputRef)}</div>
           ) : (
             <>
-              <nav className="flex items-center gap-0.5">
+              <nav className="hidden items-center gap-0.5 sm:flex">
                 {navItems.map((item) => {
                   const active = pathname === item.href;
                   return (
@@ -126,6 +138,11 @@ export function Header() {
           )}
         </div>
       </div>
+      {showSearch && (
+        <div className="border-t border-border px-4 py-2 sm:hidden">
+          {renderSearchForm(mobileInputRef)}
+        </div>
+      )}
     </header>
   );
 }
@@ -168,15 +185,15 @@ function HeaderInfo() {
   });
 
   return (
-    <div className="hidden items-center gap-3 text-xs text-muted md:flex">
-      <span>{dateStr}</span>
-      {time && <span>{time}</span>}
+    <div className="min-w-0 flex flex-1 items-center justify-center px-3 text-center text-[11px] text-muted sm:text-xs md:gap-3">
+      <span className="truncate">{dateStr}</span>
+      {time && <span className="hidden md:inline">{time}</span>}
       {rates && (
         <>
-          <span className="h-3 w-px bg-border" />
-          <span>EUR/HUF {rates.eur}</span>
-          <span>USD/HUF {rates.usd}</span>
-          <span>CHF/HUF {rates.chf}</span>
+          <span className="hidden h-3 w-px bg-border md:inline" />
+          <span className="hidden md:inline">EUR/HUF {rates.eur}</span>
+          <span className="hidden md:inline">USD/HUF {rates.usd}</span>
+          <span className="hidden md:inline">CHF/HUF {rates.chf}</span>
         </>
       )}
     </div>

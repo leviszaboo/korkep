@@ -29,7 +29,7 @@ export function NewsFeed() {
 
   if (loading) {
     return (
-      <aside className="hidden lg:block">
+      <aside className="hidden xl:block">
         <div className="sticky top-20">
           <NewsFeedSkeleton />
         </div>
@@ -40,7 +40,7 @@ export function NewsFeed() {
   if (stories.length === 0) return null;
 
   return (
-    <aside className="hidden lg:block">
+    <aside className="hidden xl:block">
       <div className="sticky top-20 flex max-h-[calc(100vh-6rem)] flex-col">
         <h2 className="mb-3 flex shrink-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-faint">
           <PulseIcon />

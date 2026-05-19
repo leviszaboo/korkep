@@ -28,7 +28,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
         since: opts?.since !== undefined ? opts.since : currentSince,
       });
       startTransition(() => {
-        router.push(href);
+        router.push(href, { scroll: false });
       });
     },
     [router, currentTopic, currentSince],
