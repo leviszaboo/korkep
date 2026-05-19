@@ -1,0 +1,64 @@
+# .github/workflows/prune.yml
+name: Prune old data
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # Daily at 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      retention_days:
+        description: 'Retention window in days'
+        required: false
+        default: '14'
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune old articles and orphaned stories
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RETENTION_DAYS: ${{ github.event.inputs.retention_days || '14' }}
+        run: |
+          CUTOFF=$(date -u -d "-${RETENTION_DAYS} days" '+%Y-%m-%d %H:%M:%S')
+          echo "Pruning articles older than ${CUTOFF} (${RETENTION_DAYS}-day retention)"
+
+          DELETED=$(psql "$DATABASE_URL" -t -A -c "
+            WITH deleted AS (
+              DELETE FROM articles
+              WHERE scraped_at < '${CUTOFF}'::timestamptz
+              RETURNING id
+            )
+            SELECT count(*) FROM deleted;
+          ")
+          echo "Deleted ${DELETED} old articles"
+
+          ORPHANED=$(psql "$DATABASE_URL" -t -A -c "
+            WITH orphaned AS (
+              DELETE FROM stories s
+              WHERE NOT EXISTS (
+                SELECT 1 FROM articles a WHERE a.story_id = s.id
+              )
+              RETURNING id
+            )
+            SELECT count(*) FROM orphaned;
+          ")
+          echo "Deleted ${ORPHANED} orphaned stories"
+
+          psql "$DATABASE_URL" -c "
+            UPDATE stories s SET
+              article_count = sub.ac,
+              source_count = sub.sc
+            FROM (
+              SELECT story_id,
+                count(*) AS ac,
+                count(DISTINCT source_id) AS sc
+              FROM articles
+              WHERE story_id IS NOT NULL
+              GROUP BY story_id
+            ) sub
+            WHERE s.id = sub.story_id
+              AND (s.article_count != sub.ac OR s.source_count != sub.sc);
+          "
+          echo "Updated story counts"
+          echo "Prune complete: deleted=${DELETED} articles, orphaned=${ORPHANED} stories"
