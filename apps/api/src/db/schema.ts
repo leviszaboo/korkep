@@ -111,6 +111,7 @@ export const llmUsageLog = pgTable(
   {
     id: serial('id').primaryKey(),
     provider: text('provider').notNull(),
+    mode: text('mode').notNull(),
     model: text('model').notNull(),
     operation: text('operation').notNull(),
     activity: text('activity').notNull(),
@@ -122,5 +123,6 @@ export const llmUsageLog = pgTable(
   (table) => [
     index('idx_llm_usage_log_called_at').on(table.calledAt),
     index('idx_llm_usage_log_activity').on(table.activity),
+    index('idx_llm_usage_log_mode').on(table.mode),
   ],
 );

@@ -6,11 +6,13 @@ import { pool } from './db/index.js';
 import { storiesRoutes } from './routes/stories.js';
 import { sourcesRoutes } from './routes/sources.js';
 import { searchRoutes } from './routes/search.js';
+import { registerRateLimit } from './rate-limit.js';
 
 async function main() {
   const app = Fastify({
     loggerInstance: logger,
     disableRequestLogging: true,
+    trustProxy: true,
   });
 
   app.addHook('onResponse', (request, reply, done) => {
@@ -27,6 +29,7 @@ async function main() {
   });
 
   await app.register(cors, { origin: config.cors.origin });
+  registerRateLimit(app, config.rateLimit);
 
   app.get('/health', async () => ({ status: 'ok' }));
 
