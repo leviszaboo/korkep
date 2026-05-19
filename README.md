@@ -127,29 +127,50 @@ Bootstrap the Google Cloud project and store secrets:
 ./deploy/setup.sh
 ```
 
-Deploy images, Cloud Run services, Cloud Run Jobs, migrations, and Cloud Scheduler triggers:
+Deploy everything:
+
+```bash
+./deploy/deploy.sh full
+```
+
+Run the interactive deploy helper:
 
 ```bash
 ./deploy/deploy.sh
 ```
 
+Deploy or reconfigure one target:
+
+```bash
+./deploy/deploy.sh deploy api
+./deploy/deploy.sh deploy process
+./deploy/deploy.sh config repair
+```
+
+Use a named env profile:
+
+```bash
+./deploy/deploy.sh --env production deploy api
+./deploy/deploy.sh --env staging full
+```
+
+Rotate a GCP Secret Manager value:
+
+```bash
+./deploy/deploy.sh secret openrouter-api-key
+```
+
+Trigger a Cloud Run job manually:
+
+```bash
+./deploy/deploy.sh trigger scrape
+./deploy/deploy.sh trigger repair REPAIR_MAX_ARTICLES=25 REPAIR_MAX_STORIES=10
+```
+
 Run diagnostics for resource sizing, free-tier projections, and Postgres/LLM usage:
 
 ```bash
-./deploy/cloud-diagnostics.sh
-```
-
-Trigger a job manually:
-
-```bash
-./deploy/trigger-job.sh scrape
-./deploy/trigger-job.sh recluster
-```
-
-All deploy scripts source `deploy/env.production` at startup. To use a different file without editing scripts:
-
-```bash
-DEPLOY_ENV_FILE=deploy/env.staging ./deploy/deploy.sh
+./deploy/deploy.sh diagnostics
 ```
 
 ### Local Development
