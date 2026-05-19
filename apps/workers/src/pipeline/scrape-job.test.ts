@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
+import type { SourceConfig } from '@korkep/shared';
 import type { ArticleCandidate } from '../adapters/base.js';
-import { filterNewCandidatesByUrl, withSourceTimeout } from './scrape-job.js';
+import { filterNewCandidatesByUrl, getAdapterForSource, shouldScrapeSource, withSourceTimeout } from './scrape-job.js';
 
 test('withSourceTimeout rejects when a source exceeds the timeout', async () => {
   const started = Date.now();
@@ -31,4 +32,23 @@ test('filterNewCandidatesByUrl removes candidates already present in the databas
   assert.deepEqual(result, [
     { url: 'https://example.com/new', title: 'New', sourceSlug: 'example' },
   ]);
+});
+
+test('getAdapterForSource includes all configured custom source adapters', () => {
+  assert.ok(getAdapterForSource('mti'));
+  assert.ok(getAdapterForSource('kontroll'));
+  assert.ok(getAdapterForSource('demokrata'));
+});
+
+test('shouldScrapeSource allows adapter-backed sources without RSS feeds', () => {
+  const mti: SourceConfig = {
+    name: 'MTI',
+    slug: 'mti',
+    url: 'https://mti.hu',
+    rssUrl: '',
+    biasRating: 'center-right',
+    scrapeIntervalMinutes: 15,
+  };
+
+  assert.equal(shouldScrapeSource(mti), true);
 });

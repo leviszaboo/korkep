@@ -47,6 +47,7 @@ async function callOpenRouter(texts: string[], activity: LlmActivity): Promise<n
       const promptTokens = (response as any).usage?.prompt_tokens ?? (response as any).usage?.promptTokens;
       logLlmUsage({
         provider: 'openrouter',
+        mode: 'openrouter',
         model: config.embedding.model,
         operation: 'embedding',
         activity,

@@ -1,7 +1,7 @@
 import { inArray, count } from 'drizzle-orm';
 import { pathToFileURL } from 'node:url';
 import pLimit from 'p-limit';
-import type { RawArticle } from '@korkep/shared';
+import type { RawArticle, SourceConfig } from '@korkep/shared';
 import { SOURCES } from '@korkep/shared';
 import { config } from '../config.js';
 import { db, pool, schema } from '../lib/db.js';
@@ -29,6 +29,9 @@ import { PortfolioAdapter } from '../adapters/portfolio.js';
 import { VgAdapter } from '../adapters/vg.js';
 import { InfostartAdapter } from '../adapters/infostart.js';
 import { PestiSracokAdapter } from '../adapters/pesti-sracok.js';
+import { MtiAdapter } from '../adapters/mti.js';
+import { KontrollAdapter } from '../adapters/kontroll.js';
+import { DemokrataAdapter } from '../adapters/demokrata.js';
 
 const adapters: Record<string, BaseAdapter> = {
   telex: new TelexAdapter(),
@@ -49,9 +52,20 @@ const adapters: Record<string, BaseAdapter> = {
   vg: new VgAdapter(),
   infostart: new InfostartAdapter(),
   'pesti-sracok': new PestiSracokAdapter(),
+  mti: new MtiAdapter(),
+  kontroll: new KontrollAdapter(),
+  demokrata: new DemokrataAdapter(),
 };
 
 const SOURCE_TIMEOUT_MS = parseInt(process.env.SCRAPE_SOURCE_TIMEOUT_MS ?? '120000', 10);
+
+export function getAdapterForSource(sourceSlug: string): BaseAdapter | undefined {
+  return adapters[sourceSlug];
+}
+
+export function shouldScrapeSource(source: SourceConfig): boolean {
+  return getAdapterForSource(source.slug) != null;
+}
 
 export async function withSourceTimeout<T>(
   sourceSlug: string,
@@ -109,7 +123,7 @@ export async function main() {
   const newArticleIds: number[] = [];
 
   // Batch source ID lookup: fetch all source IDs in one query
-  const sourceSlugs = SOURCES.filter((s) => s.rssUrl).map((s) => s.slug);
+  const sourceSlugs = SOURCES.filter(shouldScrapeSource).map((s) => s.slug);
   const dbSources = await db
     .select({ id: schema.sources.id, slug: schema.sources.slug })
     .from(schema.sources)
@@ -134,12 +148,7 @@ export async function main() {
   await Promise.allSettled(
     SOURCES.map((source) =>
       limit(async () => {
-        if (!source.rssUrl) {
-          logger.debug({ sourceSlug: source.slug }, 'Source has no RSS URL, skipping');
-          return;
-        }
-
-        const adapter = adapters[source.slug];
+        const adapter = getAdapterForSource(source.slug);
         if (!adapter) {
           logger.error({ sourceSlug: source.slug }, 'No adapter found for source');
           adapterErrors++;

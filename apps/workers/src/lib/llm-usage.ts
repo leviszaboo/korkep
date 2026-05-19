@@ -4,6 +4,7 @@ import { logger } from '../logger.js';
 const enabled = process.env.LLM_USAGE_LOG !== '0';
 
 export type TriggerMode = 'scheduled' | 'manual';
+export type LlmMode = 'openrouter' | 'gemini-fallback';
 
 export type LlmStage =
   | 'process'
@@ -25,8 +26,13 @@ export function buildActivity(
   return `${trigger}_${stage}_${operation}`;
 }
 
+export function normalizeLlmMode(mode: string | undefined): LlmMode {
+  return mode === 'gemini-fallback' || mode === 'openrouter' ? mode : 'openrouter';
+}
+
 export function logLlmUsage(params: {
   provider: string;
+  mode: LlmMode;
   model: string;
   operation: string;
   activity: LlmActivity;
@@ -43,6 +49,7 @@ export function logLlmUsage(params: {
   db.insert(schema.llmUsageLog)
     .values({
       provider: params.provider,
+      mode: params.mode,
       model: params.model,
       operation: params.operation,
       activity: params.activity,

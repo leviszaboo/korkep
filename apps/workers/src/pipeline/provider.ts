@@ -3,7 +3,7 @@ import { OpenRouter } from '@openrouter/sdk';
 import { Redis } from 'ioredis';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
-import { logLlmUsage, type LlmActivity } from '../lib/llm-usage.js';
+import { logLlmUsage, normalizeLlmMode, type LlmActivity, type LlmMode } from '../lib/llm-usage.js';
 
 // ---------------------------------------------------------------------------
 // SDK clients
@@ -164,6 +164,7 @@ export async function callGemini(
   userPrompt: string,
   jsonMode: boolean,
   activity: LlmActivity,
+  mode: LlmMode = 'gemini-fallback',
 ): Promise<string> {
   if (!gemini) throw new Error('Gemini client not configured');
 
@@ -199,6 +200,7 @@ export async function callGemini(
 
       logLlmUsage({
         provider: 'gemini',
+        mode,
         model: config.googleAiStudio.model,
         operation: 'chat',
         activity,
@@ -222,6 +224,7 @@ export async function callOpenRouterChat(
   jsonMode: boolean,
   model: string,
   activity: LlmActivity,
+  mode: LlmMode = 'openrouter',
 ): Promise<string> {
   let lastError: unknown;
 
@@ -259,6 +262,7 @@ export async function callOpenRouterChat(
 
       logLlmUsage({
         provider: 'openrouter',
+        mode,
         model,
         operation: 'chat',
         activity,
@@ -296,7 +300,7 @@ export async function callChat(
     const slot = await acquireRateSlot();
     if (slot === 'ok') {
       try {
-        return await callGemini(systemPrompt, userPrompt, jsonMode, activity);
+        return await callGemini(systemPrompt, userPrompt, jsonMode, activity, normalizeLlmMode(providerConfig.provider));
       } catch (err) {
         logger.warn({ err }, 'Gemini failed after retries, falling back to OpenRouter');
       }
@@ -305,7 +309,14 @@ export async function callChat(
     }
   }
 
-  return callOpenRouterChat(systemPrompt, userPrompt, jsonMode, providerConfig.model, activity);
+  return callOpenRouterChat(
+    systemPrompt,
+    userPrompt,
+    jsonMode,
+    providerConfig.model,
+    activity,
+    normalizeLlmMode(providerConfig.provider),
+  );
 }
 
 export { openrouter };
