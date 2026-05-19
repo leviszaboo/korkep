@@ -155,50 +155,53 @@ async function main() {
 
   const queue: QueuedArticle[] = [];
 
-  for (const source of SOURCES) {
-    if (!source.rssUrl) continue;
-    const adapter = adapters[source.slug];
-    if (!adapter) continue;
+  // Fetch all sources concurrently
+  await Promise.all(
+    SOURCES.map(async (source) => {
+      if (!source.rssUrl) return;
+      const adapter = adapters[source.slug];
+      if (!adapter) return;
 
-    try {
-      const articles = await adapter.fetchArticles();
-      scraped += articles.length;
+      try {
+        const articles = await adapter.fetchArticles();
+        scraped += articles.length;
 
-      const dbSource = await db
-        .select({ id: schema.sources.id })
-        .from(schema.sources)
-        .where(eq(schema.sources.slug, source.slug))
-        .limit(1);
-
-      if (dbSource.length === 0) {
-        logger.warn({ sourceSlug: source.slug }, 'Source not in DB, skipping');
-        continue;
-      }
-
-      const sourceId = dbSource[0].id;
-
-      for (const raw of articles) {
-        const fp = fingerprint(raw.body ?? raw.title);
-
-        const existing = await db
-          .select({ id: schema.articles.id })
-          .from(schema.articles)
-          .where(or(eq(schema.articles.url, raw.url), eq(schema.articles.fingerprint, fp)))
+        const dbSource = await db
+          .select({ id: schema.sources.id })
+          .from(schema.sources)
+          .where(eq(schema.sources.slug, source.slug))
           .limit(1);
 
-        if (existing.length > 0) {
-          skipped++;
-          continue;
+        if (dbSource.length === 0) {
+          logger.warn({ sourceSlug: source.slug }, 'Source not in DB, skipping');
+          return;
         }
 
-        queue.push({ raw, sourceId, fp });
-      }
+        const sourceId = dbSource[0].id;
 
-      logger.info({ source: source.slug, articles: articles.length }, 'Source done');
-    } catch (err) {
-      logger.error({ source: source.slug, err }, 'Source scrape failed, continuing');
-    }
-  }
+        for (const raw of articles) {
+          const fp = fingerprint(raw.body ?? raw.title);
+
+          const existing = await db
+            .select({ id: schema.articles.id })
+            .from(schema.articles)
+            .where(or(eq(schema.articles.url, raw.url), eq(schema.articles.fingerprint, fp)))
+            .limit(1);
+
+          if (existing.length > 0) {
+            skipped++;
+            continue;
+          }
+
+          queue.push({ raw, sourceId, fp });
+        }
+
+        logger.info({ source: source.slug, articles: articles.length }, 'Source done');
+      } catch (err) {
+        logger.error({ source: source.slug, err }, 'Source scrape failed, continuing');
+      }
+    })
+  );
 
   logger.info({ queued: queue.length, skipped }, 'Scrape complete, processing articles');
 
