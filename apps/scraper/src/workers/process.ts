@@ -126,7 +126,7 @@ export function startProcessWorker() {
         fingerprint: fp,
         embedding,
         storyId,
-      });
+      }).onConflictDoNothing({ target: schema.articles.url });
 
       logger.info(
         { url: raw.url, storyId, hasSummary: !!summary, topics },
@@ -135,7 +135,7 @@ export function startProcessWorker() {
     },
     {
       connection: { url: config.redis.url },
-      concurrency: 15,
+      concurrency: config.process.concurrency,
       lockDuration: 90_000,
     },
   );

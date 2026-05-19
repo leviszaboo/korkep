@@ -25,6 +25,12 @@ export const config = {
     postMergeThreshold: parseFloat(process.env.RECLUSTER_MERGE_THRESHOLD ?? '0.90'),
     postMergeMaxSize: parseInt(process.env.RECLUSTER_MERGE_MAX_SIZE ?? '24', 10),
   },
+  process: {
+    concurrency: parseInt(process.env.PROCESS_CONCURRENCY ?? '15', 10),
+  },
+  scrape: {
+    llmConcurrency: parseInt(process.env.SCRAPE_LLM_CONCURRENCY ?? '1', 10),
+  },
   repair: {
     analysisConcurrency: parseInt(process.env.REPAIR_ANALYSIS_CONCURRENCY ?? '1', 10),
   },
