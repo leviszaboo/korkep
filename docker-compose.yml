@@ -194,25 +194,6 @@ services:
     profiles:
       - resummarize
 
-  diagnostics:
-    build:
-      context: .
-      dockerfile: apps/workers/Dockerfile
-    command: ["node", "dist/diagnostics.js"]
-    environment:
-      DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep
-      REDIS_URL: redis://redis:6379
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      recluster:
-        condition: service_completed_successfully
-    restart: "no"
-    profiles:
-      - recluster
-      - tune
-
 volumes:
   pgdata:
   redisdata:

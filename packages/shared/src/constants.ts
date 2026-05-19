@@ -8,7 +8,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://telex.hu/rss',
     biasRating: 'center',
     logoUrl: 'https://telex.hu/favicon-32x32.png',
-    scrapeIntervalMinutes: 10,
   },
   {
     name: '444.hu',
@@ -17,7 +16,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://444.hu/feed',
     biasRating: 'left',
     logoUrl: 'https://cdn.444r.cloud/assets/appicon-180.f28fd1db6b2192fcd860.png',
-    scrapeIntervalMinutes: 10,
   },
   {
     name: 'HVG',
@@ -26,7 +24,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://hvg.hu/rss',
     biasRating: 'center-left',
     logoUrl: 'https://cdn.hvg.hu/assets/hvghu/favicon/favicon-96x96.png',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Index.hu',
@@ -35,7 +32,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://index.hu/24ora/rss/',
     biasRating: 'center-right',
     logoUrl: 'https://index.hu/assets/images/favicons/favicon-32x32.png',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Magyar Nemzet',
@@ -44,7 +40,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://magyarnemzet.hu/publicapi/hu/rss/magyar_nemzet/articles',
     biasRating: 'right',
     logoUrl: 'https://magyarnemzet.hu/favicon-32x32.png',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Origo',
@@ -53,7 +48,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://www.origo.hu/publicapi/hu/rss/origo/articles',
     biasRating: 'right',
     logoUrl: 'https://www.origo.hu/favicon-32x32.png',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: '24.hu',
@@ -62,7 +56,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://24.hu/feed/',
     biasRating: 'center-left',
     logoUrl: 'https://s.24.hu/apple-touch-icon.png',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Mandiner',
@@ -71,7 +64,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://mandiner.hu/publicapi/hu/rss/mandiner/articles',
     biasRating: 'right',
     logoUrl: 'https://mandiner.hu/new-favicon-32x32.png',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Blikk',
@@ -80,7 +72,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://www.blikk.hu/rss',
     biasRating: 'center-right',
     logoUrl: 'https://ocdn.eu/blikk_static/resource/icons/new/favicon.ico',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Magyar Hang',
@@ -89,7 +80,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://hang.hu/rss',
     biasRating: 'center',
     logoUrl: 'https://hang.hu/static/frontend/imgs/logo-icon-hang.svg',
-    scrapeIntervalMinutes: 20,
   },
   {
     name: 'Euronews Hungary',
@@ -98,7 +88,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://hu.euronews.com/rss',
     biasRating: 'center',
     logoUrl: 'https://hu.euronews.com/favicon.ico',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Metropol',
@@ -107,7 +96,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://metropol.hu/publicapi/hu/rss/metropol/articles',
     biasRating: 'right',
     logoUrl: 'https://metropol.hu/favicon-32x32.png',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Ripost',
@@ -116,7 +104,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://ripost.hu/publicapi/hu/rss/ripost/articles',
     biasRating: 'right',
     logoUrl: 'https://ripost.hu/favicon-32x32.png',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'ATV',
@@ -125,7 +112,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://www.atv.hu/feed/',
     biasRating: 'left',
     logoUrl: 'https://www.atv.hu/wp-content/uploads/2024/11/favicon-1.ico',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Portfolio',
@@ -134,7 +120,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://www.portfolio.hu/rss/all.xml',
     biasRating: 'center',
     logoUrl: 'https://assets.portfolio.hu/images/favicon/favicon-32x32.png',
-    scrapeIntervalMinutes: 10,
   },
   {
     name: 'Világgazdaság',
@@ -143,7 +128,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://www.vg.hu/publicapi/hu/rss/vilaggazdasag/articles',
     biasRating: 'center-right',
     logoUrl: 'https://www.vg.hu/favicon-32x32.png',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Infostart',
@@ -152,7 +136,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://infostart.hu/24ora/rss/',
     biasRating: 'center',
     logoUrl: 'https://infostart.hu/images/favicon-32x32.png',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Pesti Srácok',
@@ -161,7 +144,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://pestisracok.hu/publicapi/hu/rss/pesti_sracok/articles',
     biasRating: 'right',
     logoUrl: 'https://pestisracok.hu/favicon-32x32.png',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'MTI',
@@ -170,7 +152,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: '',
     biasRating: 'center-right',
     logoUrl: 'https://mti.hu/favicon-32x32.png',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Kontroll',
@@ -179,7 +160,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://kontroll.hu/feed.xml',
     biasRating: 'center-left',
     logoUrl: 'https://kontroll.hu/favicon.ico',
-    scrapeIntervalMinutes: 15,
   },
   {
     name: 'Demokrata',
@@ -188,7 +168,6 @@ export const SOURCES: SourceConfig[] = [
     rssUrl: 'https://demokrata.hu/feed',
     biasRating: 'right',
     logoUrl: 'https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://demokrata.hu&size=32',
-    scrapeIntervalMinutes: 20,
   },
 ];
 

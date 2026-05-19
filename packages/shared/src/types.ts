@@ -80,5 +80,4 @@ export interface SourceConfig {
   rssUrl: string | null;
   biasRating: BiasRating;
   logoUrl: string | null;
-  scrapeIntervalMinutes: number;
 }
