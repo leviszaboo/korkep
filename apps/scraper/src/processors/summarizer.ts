@@ -5,6 +5,7 @@ import { OpenRouter } from '@openrouter/sdk';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { logLlmUsage, type LlmActivity } from '../lib/llm-usage.js';
+
 import { Redis } from 'ioredis';
 
 // ---------------------------------------------------------------------------
@@ -19,23 +20,64 @@ const openrouter = new OpenRouter({ apiKey: config.openrouter.apiKey });
 
 // ---------------------------------------------------------------------------
 // Rate limiter for Google AI Studio (15 req/min, 1500 req/day free tier)
+// Uses Redis when available (local dev), falls back to in-memory (Cloud Run).
+// In-memory daily counter resets each job run — Gemini's server-side 429
+// plus the OpenRouter fallback handle overflow gracefully.
 // ---------------------------------------------------------------------------
 
 const REDIS_KEY_MINUTE = 'gemini:rate:minute';
 const REDIS_KEY_DAY = 'gemini:rate:day';
 
-let redis: Redis | null = null;
+let redisInstance: Redis | null = null;
+let redisAvailable: boolean | null = null;
 
-function getRedis(): Redis {
-  if (!redis) {
-    redis = new Redis(config.redis.url, { maxRetriesPerRequest: 3, lazyConnect: true });
-    redis.connect().catch((err: unknown) => logger.error({ err }, 'Rate limiter Redis connection failed'));
+async function tryGetRedis(): Promise<Redis | null> {
+  if (redisAvailable === false) return null;
+  if (redisInstance) return redisInstance;
+  if (!config.redis.url) { redisAvailable = false; return null; }
+
+  try {
+    const r = new Redis(config.redis.url, { maxRetriesPerRequest: 3, lazyConnect: true });
+    await r.connect();
+    redisInstance = r;
+    redisAvailable = true;
+    return r;
+  } catch {
+    logger.info('Redis not available, using in-memory rate limiter');
+    redisAvailable = false;
+    return null;
   }
-  return redis;
 }
 
+// In-memory state (used when Redis is unavailable)
+const memTimestamps: number[] = [];
+let memDailyCount = 0;
+
 async function acquireRateSlot(): Promise<'ok' | 'daily_exhausted'> {
-  const r = getRedis();
+  const r = await tryGetRedis();
+  if (r) return acquireRateSlotRedis(r);
+  return acquireRateSlotMemory();
+}
+
+async function acquireRateSlotMemory(): Promise<'ok' | 'daily_exhausted'> {
+  if (memDailyCount >= config.googleAiStudio.maxPerDay) return 'daily_exhausted';
+
+  const now = Math.floor(Date.now() / 1000);
+  while (memTimestamps.length > 0 && memTimestamps[0] <= now - 60) memTimestamps.shift();
+
+  if (memTimestamps.length >= config.googleAiStudio.maxPerMinute) {
+    const waitMs = Math.max((memTimestamps[0] + 60 - now) * 1000, 1000);
+    logger.info({ waitMs, currentCount: memTimestamps.length }, 'Gemini rate limit reached, waiting');
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    while (memTimestamps.length > 0 && memTimestamps[0] <= Math.floor(Date.now() / 1000) - 60) memTimestamps.shift();
+  }
+
+  memTimestamps.push(Math.floor(Date.now() / 1000));
+  memDailyCount++;
+  return 'ok';
+}
+
+async function acquireRateSlotRedis(r: Redis): Promise<'ok' | 'daily_exhausted'> {
   const now = Math.floor(Date.now() / 1000);
   const minuteWindow = 60;
 

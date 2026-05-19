@@ -17,6 +17,11 @@ import { RipostAdapter } from '../adapters/ripost.js';
 import { AtvAdapter } from '../adapters/atv.js';
 import { PortfolioAdapter } from '../adapters/portfolio.js';
 import { VgAdapter } from '../adapters/vg.js';
+import { InfostartAdapter } from '../adapters/infostart.js';
+import { PestiSracokAdapter } from '../adapters/pesti-sracok.js';
+import { MtiAdapter } from '../adapters/mti.js';
+import { KontrollAdapter } from '../adapters/kontroll.js';
+import { DemokrataAdapter } from '../adapters/demokrata.js';
 import type { BaseAdapter } from '../adapters/base.js';
 import { logger } from '../logger.js';
 
@@ -37,6 +42,11 @@ const adapters: Record<string, BaseAdapter> = {
   atv: new AtvAdapter(),
   portfolio: new PortfolioAdapter(),
   vg: new VgAdapter(),
+  infostart: new InfostartAdapter(),
+  'pesti-sracok': new PestiSracokAdapter(),
+  mti: new MtiAdapter(),
+  kontroll: new KontrollAdapter(),
+  demokrata: new DemokrataAdapter(),
 };
 
 export function startScrapeWorker() {

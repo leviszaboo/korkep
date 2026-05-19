@@ -44,15 +44,51 @@ function updateCentroid(
 }
 
 function mergeEntities(existing: string[], incoming: string[]): string[] {
-  const set = new Set(existing.map((e) => e.toLowerCase()));
-  const merged = [...existing];
-  for (const e of incoming) {
-    if (!set.has(e.toLowerCase())) {
-      set.add(e.toLowerCase());
-      merged.push(e);
+  return mergeEntitiesFuzzy([...existing, ...incoming]);
+}
+
+/**
+ * Fuzzy-dedup: if one entity is a substring of another (case-insensitive),
+ * keep the longer form. "orbán" + "orbán viktor" → "orbán viktor".
+ * Titles/roles like "miniszterelnök" stay separate (no substring relation).
+ */
+export function mergeEntitiesFuzzy(all: string[], limit = 15): string[] {
+  const normalized = all.map((e) => ({ original: e, lower: e.toLowerCase().trim() }));
+
+  // Count occurrences to prefer more frequent forms
+  const counts = new Map<string, number>();
+  for (const { lower } of normalized) {
+    counts.set(lower, (counts.get(lower) ?? 0) + 1);
+  }
+
+  // Deduplicate exact matches first, keeping the most common casing
+  const uniqueByLower = new Map<string, string>();
+  for (const { original, lower } of normalized) {
+    const existing = uniqueByLower.get(lower);
+    if (!existing) {
+      uniqueByLower.set(lower, original);
     }
   }
-  return merged.slice(0, 15);
+
+  let entities = [...uniqueByLower.values()];
+
+  // Absorb shorter forms into longer ones via substring matching
+  const absorbed = new Set<number>();
+  for (let i = 0; i < entities.length; i++) {
+    if (absorbed.has(i)) continue;
+    for (let j = 0; j < entities.length; j++) {
+      if (i === j || absorbed.has(j)) continue;
+      const li = entities[i].toLowerCase();
+      const lj = entities[j].toLowerCase();
+      if (li.length < lj.length && lj.includes(li)) {
+        absorbed.add(i);
+        break;
+      }
+    }
+  }
+
+  entities = entities.filter((_, i) => !absorbed.has(i));
+  return entities.slice(0, limit);
 }
 
 export async function assignStory(

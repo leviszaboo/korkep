@@ -11,7 +11,8 @@ export type LlmActivity =
   | 'manual_reembed'
   | 'scheduled_recluster'
   | 'scheduled_summarize'
-  | 'scheduled_repair';
+  | 'scheduled_repair'
+  | 'manual_repair';
 
 export function logLlmUsage(params: {
   provider: string;

@@ -21,8 +21,12 @@ export const config = {
     reclusterFrequencyMinutes: parseInt(process.env.RECLUSTER_FREQUENCY_MINUTES ?? '30', 10),
     noCache: process.env.RECLUSTER_NO_CACHE === '1' || process.env.RECLUSTER_NO_CACHE === 'true',
     forceOpenRouter: process.env.FORCE_OPENROUTER === '1' || process.env.FORCE_OPENROUTER === 'true',
+    llmConcurrency: parseInt(process.env.RECLUSTER_LLM_CONCURRENCY ?? '1', 10),
     postMergeThreshold: parseFloat(process.env.RECLUSTER_MERGE_THRESHOLD ?? '0.90'),
     postMergeMaxSize: parseInt(process.env.RECLUSTER_MERGE_MAX_SIZE ?? '24', 10),
+  },
+  repair: {
+    analysisConcurrency: parseInt(process.env.REPAIR_ANALYSIS_CONCURRENCY ?? '1', 10),
   },
   googleAiStudio: {
     apiKey: process.env.GOOGLE_AI_STUDIO_API_KEY ?? '',

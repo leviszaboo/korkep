@@ -1,8 +1,9 @@
-import { gt, inArray, sql } from 'drizzle-orm';
+import { and, gt, inArray, lte, sql } from 'drizzle-orm';
 import { db, schema } from '../lib/db.js';
 import { config } from '../config.js';
 import { CLUSTERING } from '@korkep/shared';
 import { generateStoryTitleAndSummary, type StoryTitleResult } from '../processors/summarizer.js';
+import { mergeEntitiesFuzzy } from '../processors/clusterer.js';
 import type { LlmActivity } from '../lib/llm-usage.js';
 import { logger } from '../logger.js';
 
@@ -54,20 +55,39 @@ export async function runRecluster(activity: LlmActivity = 'scheduled_recluster'
   );
   const cutoff = new Date(Date.now() - CLUSTERING.timeWindowHours * 60 * 60 * 1000);
 
-  const articles = await db
-    .select({
-      id: schema.articles.id,
-      title: schema.articles.title,
-      summary: schema.articles.summary,
-      topics: schema.articles.topics,
-      sourceId: schema.articles.sourceId,
-      embedding: schema.articles.embedding,
-      articleType: schema.articles.articleType,
-      publishedAt: schema.articles.publishedAt,
-      createdAt: schema.articles.createdAt,
-    })
+  const articleColumns = {
+    id: schema.articles.id,
+    title: schema.articles.title,
+    summary: schema.articles.summary,
+    topics: schema.articles.topics,
+    sourceId: schema.articles.sourceId,
+    embedding: schema.articles.embedding,
+    articleType: schema.articles.articleType,
+    entities: schema.articles.entities,
+    publishedAt: schema.articles.publishedAt,
+    createdAt: schema.articles.createdAt,
+    storyId: schema.articles.storyId,
+  };
+
+  const recentArticles = await db
+    .select(articleColumns)
     .from(schema.articles)
     .where(gt(schema.articles.createdAt, cutoff));
+
+  // Fetch older articles that belong to stories spanning the cutoff boundary
+  const activeStoryIds = [...new Set(recentArticles.map((a) => a.storyId).filter((id) => id != null))];
+  let olderTails: typeof recentArticles = [];
+  if (activeStoryIds.length > 0) {
+    olderTails = await db
+      .select(articleColumns)
+      .from(schema.articles)
+      .where(and(inArray(schema.articles.storyId, activeStoryIds), lte(schema.articles.createdAt, cutoff)));
+    if (olderTails.length > 0) {
+      logger.info({ count: olderTails.length, stories: activeStoryIds.length }, 'Fetched older story tails across cutoff boundary');
+    }
+  }
+
+  const articles = [...recentArticles, ...olderTails];
 
   // Exclude aggregation articles from clustering — they span multiple stories
   const withEmbeddings = articles.filter((a) => a.embedding != null && a.articleType !== 'aggregation');
@@ -159,6 +179,7 @@ export async function runRecluster(activity: LlmActivity = 'scheduled_recluster'
     firstSeenAt: Date;
     relevanceScore: number;
     storyTopics: string[];
+    storyEntities: string[];
     clusterFingerprint: string;
     clusterArticles: typeof withEmbeddings;
   }
@@ -176,14 +197,15 @@ export async function runRecluster(activity: LlmActivity = 'scheduled_recluster'
     }, clusterArticles[0].publishedAt ?? clusterArticles[0].createdAt);
     const relevanceScore = computeRelevanceScore(sourceIds.size, articleIds.length, biasGroups.size);
     const storyTopics = aggregateTopics(clusterArticles.map((a) => a.topics));
+    const storyEntities = mergeEntitiesFuzzy(clusterArticles.flatMap((a) => a.entities ?? []));
     const clusterFingerprint = articleIds.slice().sort((a, b) => a - b).join(',');
 
-    clusters.push({ articleIds, sourceIds, biasGroups, firstSeenAt, relevanceScore, storyTopics, clusterFingerprint, clusterArticles });
+    clusters.push({ articleIds, sourceIds, biasGroups, firstSeenAt, relevanceScore, storyTopics, storyEntities, clusterFingerprint, clusterArticles });
   }
 
   // Generate titles and summaries in parallel via OpenRouter
   // Clusters may be split by the LLM if incoherent, producing additional sub-clusters
-  const LLM_CONCURRENCY = 15;
+  const LLM_CONCURRENCY = config.recluster.llmConcurrency;
 
   interface FinalStory {
     title: string;
@@ -194,6 +216,7 @@ export async function runRecluster(activity: LlmActivity = 'scheduled_recluster'
     firstSeenAt: Date;
     relevanceScore: number;
     storyTopics: string[];
+    storyEntities: string[];
   }
 
   const finalStories: FinalStory[] = [];
@@ -262,6 +285,7 @@ export async function runRecluster(activity: LlmActivity = 'scheduled_recluster'
           firstSeenAt: subFirstSeenAt,
           relevanceScore: computeRelevanceScore(subSourceIds.size, groupArticles.length, subBiasGroups.size),
           storyTopics: aggregateTopics(groupArticles.map((a) => a.topics)),
+          storyEntities: mergeEntitiesFuzzy(groupArticles.flatMap((a) => a.entities ?? [])),
         });
       }
 
@@ -302,6 +326,7 @@ export async function runRecluster(activity: LlmActivity = 'scheduled_recluster'
               firstSeenAt: clusters[idx].firstSeenAt,
               relevanceScore: clusters[idx].relevanceScore,
               storyTopics: clusters[idx].storyTopics,
+              storyEntities: clusters[idx].storyEntities,
             });
           })
           .finally(() => {
@@ -454,6 +479,7 @@ export async function runRecluster(activity: LlmActivity = 'scheduled_recluster'
           firstSeenAt: earliestFirst,
           relevanceScore: computeRelevanceScore(allSourceIds.size, allArticleIds.length, allBiasGroups.size),
           storyTopics: allTopics,
+          storyEntities: mergeEntitiesFuzzy(indices.flatMap((i) => finalStories[i].storyEntities)),
         });
       }
 
@@ -478,6 +504,7 @@ export async function runRecluster(activity: LlmActivity = 'scheduled_recluster'
           title: story.title,
           summary: story.summary,
           topics: story.storyTopics.length > 0 ? story.storyTopics : null,
+          entities: story.storyEntities.length > 0 ? story.storyEntities : null,
           articleCount: story.articleIds.length,
           sourceCount: story.sourceIds.size,
           relevanceScore: story.relevanceScore,
