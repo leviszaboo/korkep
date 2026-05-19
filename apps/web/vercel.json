@@ -1,0 +1,4 @@
+{
+  "installCommand": "pnpm install",
+  "buildCommand": "pnpm --filter @korkep/shared build && pnpm --filter @korkep/web build"
+}

@@ -253,6 +253,128 @@ export async function getSources() {
   }));
 }
 
+export async function getRelatedStories(storyId: number, limit = 4) {
+  const story = await db
+    .select({ topics: schema.stories.topics, entities: schema.stories.entities })
+    .from(schema.stories)
+    .where(eq(schema.stories.id, storyId))
+    .limit(1);
+
+  if (!story[0]) return [];
+
+  const { topics, entities } = story[0];
+
+  const topicCondition = topics && topics.length > 0
+    ? sql`s.topics && ARRAY[${sql.raw(topics.map(t => `'${t.replace(/'/g, "''")}'`).join(','))}]::text[]`
+    : sql`false`;
+
+  const entityCondition = entities && entities.length > 0
+    ? sql`s.entities && ARRAY[${sql.raw(entities.map(e => `'${e.replace(/'/g, "''")}'`).join(','))}]::text[]`
+    : sql`false`;
+
+  const result = await db.execute<{
+    id: number;
+    title: string;
+    summary: string | null;
+    topics: string[] | null;
+    article_count: number;
+    source_count: number;
+    relevance_score: number;
+    first_seen_at: string;
+    updated_at: string;
+    created_at: string;
+    latest_published_at: string;
+    image_url: string | null;
+    left_count: string;
+    center_count: string;
+    right_count: string;
+  }>(sql`
+    SELECT
+      s.id, s.title, s.summary, s.topics, s.article_count, s.source_count,
+      s.relevance_score, s.first_seen_at::text, s.updated_at::text, s.created_at::text,
+      COALESCE((SELECT MAX(a.published_at)::text FROM articles a WHERE a.story_id = s.id), s.updated_at::text) AS latest_published_at,
+      (SELECT a2.image_url FROM articles a2 JOIN sources s2 ON s2.id = a2.source_id WHERE a2.story_id = s.id AND a2.image_url IS NOT NULL AND s2.slug != '24hu' ORDER BY a2.published_at DESC NULLS LAST LIMIT 1) AS image_url,
+      COALESCE((SELECT COUNT(*)::text FROM articles a JOIN sources src ON src.id = a.source_id WHERE a.story_id = s.id AND src.bias_rating IN ('left', 'center-left')), '0') AS left_count,
+      COALESCE((SELECT COUNT(*)::text FROM articles a JOIN sources src ON src.id = a.source_id WHERE a.story_id = s.id AND src.bias_rating = 'center'), '0') AS center_count,
+      COALESCE((SELECT COUNT(*)::text FROM articles a JOIN sources src ON src.id = a.source_id WHERE a.story_id = s.id AND src.bias_rating IN ('right', 'center-right')), '0') AS right_count
+    FROM stories s
+    WHERE s.id != ${storyId}
+      AND (${topicCondition} OR ${entityCondition})
+    ORDER BY s.updated_at DESC
+    LIMIT ${limit}
+  `);
+
+  return (result.rows ?? []).map((row) => ({
+    id: row.id,
+    title: row.title,
+    summary: row.summary,
+    topics: row.topics,
+    articleCount: row.article_count,
+    sourceCount: row.source_count,
+    relevanceScore: row.relevance_score,
+    firstSeenAt: row.first_seen_at,
+    updatedAt: row.updated_at,
+    createdAt: row.created_at,
+    latestPublishedAt: row.latest_published_at,
+    imageUrl: row.image_url,
+    sourceBias: {
+      left: Number(row.left_count),
+      center: Number(row.center_count),
+      right: Number(row.right_count),
+    },
+    sources: [],
+  }));
+}
+
+export async function getSharedStories(slugA: string, slugB: string, limit = 50) {
+  const result = await db.execute<{
+    story_id: number;
+    story_title: string;
+    story_topics: string[] | null;
+    latest_published_at: string;
+    title_a: string;
+    bias_a: string;
+    title_b: string;
+    bias_b: string;
+  }>(sql`
+    SELECT
+      st.id AS story_id,
+      st.title AS story_title,
+      st.topics AS story_topics,
+      COALESCE(GREATEST(a1.published_at, a2.published_at)::text, st.updated_at::text) AS latest_published_at,
+      a1.title AS title_a,
+      s1.bias_rating AS bias_a,
+      a2.title AS title_b,
+      s2.bias_rating AS bias_b
+    FROM stories st
+    JOIN LATERAL (
+      SELECT a.title, a.published_at FROM articles a
+      JOIN sources s ON s.id = a.source_id AND s.slug = ${slugA}
+      WHERE a.story_id = st.id
+      ORDER BY a.published_at DESC NULLS LAST LIMIT 1
+    ) a1 ON true
+    JOIN LATERAL (
+      SELECT a.title, a.published_at FROM articles a
+      JOIN sources s ON s.id = a.source_id AND s.slug = ${slugB}
+      WHERE a.story_id = st.id
+      ORDER BY a.published_at DESC NULLS LAST LIMIT 1
+    ) a2 ON true
+    JOIN sources s1 ON s1.slug = ${slugA}
+    JOIN sources s2 ON s2.slug = ${slugB}
+    ORDER BY GREATEST(a1.published_at, a2.published_at) DESC NULLS LAST
+    LIMIT ${limit}
+  `);
+
+  return (result.rows ?? []).map((row) => ({
+    storyId: row.story_id,
+    storyTitle: row.story_title,
+    storyTopics: row.story_topics,
+    latestPublishedAt: row.latest_published_at,
+    sourceA: { title: row.title_a, biasRating: row.bias_a },
+    sourceB: { title: row.title_b, biasRating: row.bias_b },
+  }));
+}
+
 export async function searchStories(query: string) {
   const result = await db.execute<{
     story_id: number;

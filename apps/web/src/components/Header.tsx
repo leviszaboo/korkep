@@ -64,7 +64,7 @@ export function Header() {
       <div className="mx-auto flex h-14 max-w-[1400px] items-center justify-between px-4 sm:px-6">
         <Link href="/" className="flex shrink-0 items-center gap-2.5">
           <TulipLogo />
-          <span className="text-lg font-bold tracking-tight text-foreground">
+          <span className="font-serif text-lg font-bold tracking-tight text-foreground">
             Körkép
           </span>
         </Link>

@@ -1,15 +1,21 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { Manrope, Source_Serif_4 } from 'next/font/google';
 import { Header } from '@/components/Header';
 import { MobileNav } from '@/components/MobileNav';
 import { FooterEmbroidery } from '@/components/FolkPattern';
 import './globals.css';
 
-const inter = Inter({
+const manrope = Manrope({
   subsets: ['latin', 'latin-ext'],
   display: 'swap',
   variable: '--font-sans',
+});
+
+const sourceSerif = Source_Serif_4({
+  subsets: ['latin', 'latin-ext'],
+  display: 'swap',
+  variable: '--font-serif',
 });
 
 export const metadata: Metadata = {
@@ -24,7 +30,7 @@ const themeScript = `(function(){var t=localStorage.getItem('theme');if(t==='dar
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="hu" className={inter.variable} suppressHydrationWarning>
+    <html lang="hu" className={`${manrope.variable} ${sourceSerif.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>

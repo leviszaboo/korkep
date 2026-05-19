@@ -1,9 +1,11 @@
 export const dynamic = 'force-dynamic';
 
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { getSources } from '@/lib/api';
 import { BiasBadge } from '@/components/Badge';
 import { FolkDivider } from '@/components/FolkPattern';
+import { BiasSpectrum } from '@/components/BiasSpectrum';
 
 export const metadata: Metadata = {
   title: 'Sources',
@@ -16,18 +18,27 @@ export default async function SourcesPage() {
   return (
     <div className="flex flex-col gap-8">
       <div className="text-center">
-        <h1 className="text-2xl font-semibold text-foreground">Sources</h1>
+        <h1 className="font-serif text-2xl font-semibold text-foreground">Sources</h1>
         <p className="mt-1.5 text-sm text-muted">
           {sources.length} Hungarian news outlets
         </p>
+        <Link
+          href="/sources/compare"
+          className="mt-2 inline-flex text-xs font-medium text-accent transition-colors hover:underline"
+        >
+          Források összehasonlítása →
+        </Link>
       </div>
 
       <FolkDivider />
+
+      <BiasSpectrum sources={sources} />
 
       <div className="grid gap-3 sm:grid-cols-2">
         {sources.map((source) => (
           <a
             key={source.id}
+            id={`source-${source.slug}`}
             href={source.url}
             target="_blank"
             rel="noopener noreferrer"

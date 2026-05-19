@@ -79,6 +79,15 @@ export interface SearchResult {
   relevanceScore: number;
 }
 
+export interface ComparedStory {
+  storyId: number;
+  storyTitle: string;
+  storyTopics: string[] | null;
+  latestPublishedAt: string;
+  sourceA: { title: string; biasRating: BiasRating };
+  sourceB: { title: string; biasRating: BiasRating };
+}
+
 export interface Paginated<T> {
   data: T[];
   pagination: {

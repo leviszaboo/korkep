@@ -67,7 +67,8 @@
 }
 
 @theme {
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-sans: "Manrope", system-ui, -apple-system, sans-serif;
+  --font-serif: "Source Serif 4", "Georgia", serif;
 
   --color-base: var(--base);
   --color-surface: var(--surface);

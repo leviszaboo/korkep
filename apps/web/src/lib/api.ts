@@ -1,4 +1,4 @@
-import type { Story, StoryDetail, Source, SearchResult, Paginated } from './types';
+import type { Story, StoryDetail, Source, SearchResult, Paginated, ComparedStory } from './types';
 
 const API_URL = process.env.API_URL ?? 'http://localhost:3001';
 
@@ -31,4 +31,12 @@ export async function getSources() {
 
 export async function searchStories(query: string) {
   return get<{ data: SearchResult[] }>(`/api/search?q=${encodeURIComponent(query)}`, { revalidate: 30 });
+}
+
+export async function getRelatedStories(storyId: number) {
+  return get<{ data: Story[] }>(`/api/stories/${storyId}/related`, { revalidate: 300 });
+}
+
+export async function getSharedStories(slugA: string, slugB: string) {
+  return get<{ data: ComparedStory[] }>(`/api/sources/compare?a=${encodeURIComponent(slugA)}&b=${encodeURIComponent(slugB)}`, { revalidate: 60 });
 }

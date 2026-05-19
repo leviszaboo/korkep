@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getStories, getStoryById, type SortMode } from '../db/queries.js';
+import { getStories, getStoryById, getRelatedStories, type SortMode } from '../db/queries.js';
 
 export async function storiesRoutes(app: FastifyInstance) {
   app.get('/api/stories', async (request, reply) => {
@@ -32,5 +32,17 @@ export async function storiesRoutes(app: FastifyInstance) {
     }
 
     return result;
+  });
+
+  app.get('/api/stories/:id/related', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const related = await getRelatedStories(Number(id));
+      return { data: related };
+    } catch (err) {
+      request.log.error({ err }, 'GET /api/stories/:id/related failed');
+      reply.code(500);
+      return { error: 'Internal server error' };
+    }
   });
 }

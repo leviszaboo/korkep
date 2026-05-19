@@ -32,7 +32,7 @@ export function ArticleCard({ article }: { article: Article }) {
           <ArrowUpRight />
         </div>
 
-        <h3 className="text-base font-medium leading-snug text-foreground group-hover:text-accent transition-colors">
+        <h3 className="font-serif text-base font-medium leading-snug text-foreground group-hover:text-accent transition-colors">
           {article.title}
         </h3>
 

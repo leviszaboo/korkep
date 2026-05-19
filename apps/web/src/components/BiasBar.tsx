@@ -13,7 +13,7 @@ export function BiasBar({ counts, showLabels = false }: BiasBarProps) {
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex h-[3px] w-full overflow-hidden bg-elevated">
+      <div className="flex h-2 w-full overflow-hidden rounded bg-elevated">
         {counts.left > 0 && (
           <div className="bg-bias-left transition-all" style={{ width: pct(counts.left) }} />
         )}
@@ -26,21 +26,21 @@ export function BiasBar({ counts, showLabels = false }: BiasBarProps) {
       </div>
 
       {showLabels && (
-        <div className="flex gap-3 text-xs text-muted">
+        <div className="flex gap-3 text-xs font-semibold">
           {counts.left > 0 && (
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1 text-bias-left">
               <span className="size-1.5 rounded-full bg-bias-left" />
               {counts.left} bal
             </span>
           )}
           {counts.center > 0 && (
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1 text-bias-center">
               <span className="size-1.5 rounded-full bg-bias-center" />
               {counts.center} közép
             </span>
           )}
           {counts.right > 0 && (
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1 text-bias-right">
               <span className="size-1.5 rounded-full bg-bias-right" />
               {counts.right} jobb
             </span>

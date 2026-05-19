@@ -97,6 +97,22 @@ const adapters: AdapterDef[] = [
     categorySelectors: ['meta[property="article:section"]', '.o-post__category a'],
     removeSelectors: ['.o-post__authorShare', '.m-articleWidget', '.banner-container', '.highlight-block'],
   },
+  {
+    slug: 'infostart',
+    rssUrl: 'https://infostart.hu/24ora/rss/',
+    bodySelectors: ['.article-content', '.article-content p'],
+    leadSelectors: ['.article-lead'],
+    categorySelectors: ['.breadcrumb a'],
+    removeSelectors: ['iframe', '.article-related', '.article-soc', '.article-meta', '.breadcrumb'],
+  },
+  {
+    slug: 'pesti-sracok',
+    rssUrl: 'https://pestisracok.hu/publicapi/hu/rss/pesti_sracok/articles',
+    bodySelectors: ['.block-content'],
+    leadSelectors: ['.article-lead'],
+    categorySelectors: ['.article-column'],
+    removeSelectors: ['.article-card', '.external-recommendations', 'figure'],
+  },
 ];
 
 function checkSelectors(html: string, selectors: string[], label: string): SelectorCheck[] {

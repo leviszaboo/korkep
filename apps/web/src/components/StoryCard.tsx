@@ -1,9 +1,21 @@
 import Link from 'next/link';
-import type { Story } from '@/lib/types';
+import type { Story, BiasCounts } from '@/lib/types';
 import { timeAgo, isFresh } from '@/lib/utils';
 import { BiasBar } from './BiasBar';
 import { FreshBadge, TopicBadge } from './Badge';
 import { SourceAvatars } from './SourceAvatars';
+
+function isWidelyDebated(story: Story): boolean {
+  return story.sourceCount >= 8;
+}
+
+function getLopsidedLabel(bias: BiasCounts): string | null {
+  const total = bias.left + bias.center + bias.right;
+  if (total < 4) return null;
+  if (bias.right > 0 && bias.left > 0 && bias.right >= bias.left * 3) return 'Főleg jobboldali lefedettség';
+  if (bias.left > 0 && bias.right > 0 && bias.left >= bias.right * 3) return 'Főleg baloldali lefedettség';
+  return null;
+}
 
 interface StoryCardProps {
   story: Story;
@@ -61,7 +73,7 @@ function FeaturedCard({ story }: { story: Story }) {
               {story.topics?.map((t) => <TopicBadge key={t} topic={t} />)}
               {widelyCovered && <WidelyCoveredBadge count={story.sourceCount} />}
             </div>
-            <h2 className="text-xl font-bold leading-tight text-white sm:text-2xl md:text-3xl">
+            <h2 className="font-serif text-xl font-bold leading-tight text-white sm:text-2xl md:text-3xl">
               {story.title}
             </h2>
             {story.summary && (
@@ -99,7 +111,7 @@ function FeaturedCard({ story }: { story: Story }) {
             {story.topics?.map((t) => <TopicBadge key={t} topic={t} />)}
             {widelyCovered && <WidelyCoveredBadge count={story.sourceCount} />}
           </div>
-          <h2 className="text-xl font-bold leading-tight text-foreground transition-colors group-hover:text-accent sm:text-2xl md:text-3xl">
+          <h2 className="font-serif text-xl font-bold leading-tight text-foreground transition-colors group-hover:text-accent sm:text-2xl md:text-3xl">
             {story.title}
           </h2>
           {story.summary && (
@@ -129,7 +141,7 @@ function CompactCard({ story, fill = false }: { story: Story; fill?: boolean }) 
 
   return (
     <Link href={`/stories/${story.id}`} className={`group block${fill ? ' h-full' : ''}`}>
-      <article className={`overflow-hidden rounded-lg border-b border-border p-3.5 transition-all${fill ? ' flex h-full flex-col' : ''}`}>
+      <article className={`overflow-hidden rounded-lg border-b border-border p-3.5 transition-all${fill ? ' flex h-full flex-col' : ''} ${isWidelyDebated(story) ? 'border-l-2 border-l-accent shadow-md' : ''}`}>
         <div className={`flex flex-col gap-2${fill ? ' flex-1' : ''}`}>
           <div className="flex items-center gap-1.5">
             {isFresh(story.latestPublishedAt) && <FreshBadge />}
@@ -137,13 +149,18 @@ function CompactCard({ story, fill = false }: { story: Story; fill?: boolean }) 
             {widelyCovered && <WidelyCoveredBadge count={story.sourceCount} />}
           </div>
 
-          <h2 className="text-sm font-semibold leading-snug text-foreground transition-colors group-hover:text-accent line-clamp-2">
+          <h2 className="font-serif text-sm font-semibold leading-snug text-foreground transition-colors group-hover:text-accent line-clamp-2">
             {story.title}
           </h2>
 
           <div className="flex items-center gap-2">
             <BiasBar counts={story.sourceBias} />
           </div>
+          {getLopsidedLabel(story.sourceBias) && (
+            <span className="text-[10px] font-medium text-faint">
+              {getLopsidedLabel(story.sourceBias)}
+            </span>
+          )}
           <div className="flex items-center gap-1.5 text-xs text-faint">
             <SourcesIcon />
             <span>{story.sourceCount}</span>
@@ -171,7 +188,7 @@ function DefaultCard({ story }: { story: Story }) {
   if (story.imageUrl) {
     return (
       <Link href={`/stories/${story.id}`} className="group block">
-        <article className="relative aspect-[3/2] overflow-hidden rounded-lg">
+        <article className={`relative aspect-[3/2] overflow-hidden rounded-lg ${isWidelyDebated(story) ? 'border-l-2 border-l-accent shadow-md' : ''}`}>
           <img
             src={story.imageUrl}
             alt=""
@@ -180,7 +197,7 @@ function DefaultCard({ story }: { story: Story }) {
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent" />
           <div className="absolute bottom-0 left-0 right-0 flex flex-col gap-2 p-4">
             {badges}
-            <h2 className="text-base font-semibold leading-snug text-white line-clamp-2">
+            <h2 className="font-serif text-base font-semibold leading-snug text-white line-clamp-2">
               {story.title}
             </h2>
             <BiasBar counts={story.sourceBias} />
@@ -202,10 +219,10 @@ function DefaultCard({ story }: { story: Story }) {
 
   return (
     <Link href={`/stories/${story.id}`} className="group block">
-      <article className="flex aspect-[3/2] flex-col overflow-hidden rounded-lg border-b border-border transition-all">
+      <article className={`flex aspect-[3/2] flex-col overflow-hidden rounded-lg border-b border-border transition-all ${isWidelyDebated(story) ? 'border-l-2 border-l-accent shadow-md' : ''}`}>
         <div className="flex flex-1 flex-col gap-2.5 p-4">
           {badges}
-          <h2 className="text-base font-semibold leading-snug text-foreground transition-colors group-hover:text-accent line-clamp-2">
+          <h2 className="font-serif text-base font-semibold leading-snug text-foreground transition-colors group-hover:text-accent line-clamp-2">
             {story.title}
           </h2>
           {story.summary && (
@@ -214,6 +231,11 @@ function DefaultCard({ story }: { story: Story }) {
         </div>
         <div className="flex flex-col gap-2.5 p-4 pt-3">
           <BiasBar counts={story.sourceBias} />
+          {getLopsidedLabel(story.sourceBias) && (
+            <span className="text-[10px] font-medium text-faint">
+              {getLopsidedLabel(story.sourceBias)}
+            </span>
+          )}
           <div className="flex items-center justify-between">
             <SourceAvatars sources={story.sources} max={3} />
             <div className="flex items-center gap-1.5 text-xs text-faint">

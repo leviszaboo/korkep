@@ -39,7 +39,7 @@ export function NewsFeed() {
               href={`/stories/${story.id}`}
               className="group flex flex-col gap-1.5 border-l-2 border-border py-3 pl-3 transition-colors hover:border-accent"
             >
-              <h3 className="text-[13px] font-medium leading-snug text-foreground transition-colors group-hover:text-accent line-clamp-2">
+              <h3 className="font-serif text-[13px] font-medium leading-snug text-foreground transition-colors group-hover:text-accent line-clamp-2">
                 {story.title}
               </h3>
               <div className="max-w-[180px]">
