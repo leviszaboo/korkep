@@ -88,7 +88,7 @@ export const SOURCES: SourceConfig[] = [
     url: 'https://hang.hu',
     rssUrl: 'https://hang.hu/rss',
     biasRating: 'center',
-    logoUrl: 'https://hang.hu/favicon.ico',
+    logoUrl: 'https://hang.hu/static/frontend/imgs/logo-icon-hang.svg',
     scrapeIntervalMinutes: 20,
   },
   {
@@ -187,7 +187,7 @@ export const SOURCES: SourceConfig[] = [
     url: 'https://demokrata.hu',
     rssUrl: 'https://demokrata.hu/feed',
     biasRating: 'right',
-    logoUrl: 'https://demokrata.hu/favicon.ico',
+    logoUrl: 'https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://demokrata.hu&size=32',
     scrapeIntervalMinutes: 20,
   },
 ];

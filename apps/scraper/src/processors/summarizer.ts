@@ -37,7 +37,8 @@ async function tryGetRedis(): Promise<Redis | null> {
   if (!config.redis.url) { redisAvailable = false; return null; }
 
   try {
-    const r = new Redis(config.redis.url, { maxRetriesPerRequest: 3, lazyConnect: true });
+    const r = new Redis(config.redis.url, { maxRetriesPerRequest: 0, retryStrategy: () => null, lazyConnect: true });
+    r.on('error', () => {});
     await r.connect();
     redisInstance = r;
     redisAvailable = true;

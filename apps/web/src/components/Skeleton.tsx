@@ -64,6 +64,22 @@ export function StoryCardSkeleton() {
   );
 }
 
+export function NewsFeedSkeleton() {
+  return (
+    <div className="flex flex-col">
+      <div className="mb-3 h-4 w-24 animate-pulse rounded bg-elevated" />
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div key={i} className="flex flex-col gap-2 border-l-2 border-border py-3 pl-3">
+          <div className="h-4 w-full animate-pulse rounded bg-elevated" />
+          <div className="h-3 w-2/3 animate-pulse rounded bg-elevated" />
+          <div className="h-[3px] w-[180px] animate-pulse rounded-full bg-elevated" />
+          <div className="h-3 w-24 animate-pulse rounded bg-elevated" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function StoryDetailSkeleton() {
   return (
     <div className="flex animate-pulse flex-col gap-6">

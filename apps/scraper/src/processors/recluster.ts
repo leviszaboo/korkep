@@ -115,9 +115,18 @@ export async function runRecluster(activity: LlmActivity = 'scheduled_recluster'
 
   logger.info({ count: items.length }, 'Sending articles to HDBSCAN recluster');
 
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.batchClusterer.url.includes('run.app')) {
+    const tokenUrl = `http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=${config.batchClusterer.url}`;
+    const tokenRes = await fetch(tokenUrl, { headers: { 'Metadata-Flavor': 'Google' } });
+    if (tokenRes.ok) {
+      headers['Authorization'] = `Bearer ${await tokenRes.text()}`;
+    }
+  }
+
   const res = await fetch(`${config.batchClusterer.url}/recluster`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ items, min_cluster_size: 2 }),
     signal: AbortSignal.timeout(120_000),
   });

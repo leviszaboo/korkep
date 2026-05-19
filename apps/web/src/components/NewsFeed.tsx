@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import type { Story, Paginated } from '@/lib/types';
 import { timeAgo } from '@/lib/utils';
 import { BiasBar } from './BiasBar';
+import { NewsFeedSkeleton } from './Skeleton';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -13,15 +14,28 @@ export function NewsFeed() {
   const searchParams = useSearchParams();
   const topic = searchParams.get('topic');
   const [stories, setStories] = useState<Story[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    setLoading(true);
     const params = new URLSearchParams({ sort: 'latest', limit: '30' });
     if (topic) params.set('topic', topic);
     fetch(`${API_URL}/api/stories?${params}`)
       .then((res) => res.json())
       .then((data: Paginated<Story>) => setStories(data.data))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [topic]);
+
+  if (loading) {
+    return (
+      <aside className="hidden lg:block">
+        <div className="sticky top-20">
+          <NewsFeedSkeleton />
+        </div>
+      </aside>
+    );
+  }
 
   if (stories.length === 0) return null;
 
