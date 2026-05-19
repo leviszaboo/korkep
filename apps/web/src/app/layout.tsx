@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { Manrope, Source_Serif_4 } from 'next/font/google';
 import { SpeedInsights } from '@vercel/speed-insights/next';
+import { Analytics } from '@vercel/analytics/next';
 import { Header } from '@/components/Header';
 import { MobileNav } from '@/components/MobileNav';
 import { FooterEmbroidery } from '@/components/FolkPattern';
@@ -47,6 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </footer>
         <MobileNav />
         <SpeedInsights />
+        <Analytics />
       </body>
     </html>
   );
