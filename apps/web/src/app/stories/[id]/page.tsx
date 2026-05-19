@@ -68,7 +68,7 @@ async function StoryContent({ id }: { id: number }) {
 
       {heroImage ? (
         <div className="relative overflow-hidden rounded-lg">
-          <div className="aspect-[5/2]">
+          <div className="aspect-[4/3] sm:aspect-[5/2]">
             <img
               src={heroImage}
               alt=""

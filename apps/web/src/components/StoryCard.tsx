@@ -59,7 +59,7 @@ function FeaturedCard({ story }: { story: Story }) {
     return (
       <Link href={`/stories/${story.id}`} className="group block">
         <article className="relative overflow-hidden rounded-lg">
-          <div className="aspect-[2/1] sm:aspect-[5/2]">
+          <div className="aspect-[4/3] sm:aspect-[5/2]">
             <img
               src={story.imageUrl}
               alt=""

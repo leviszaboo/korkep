@@ -12,8 +12,20 @@ export const metadata: Metadata = {
   description: 'Hungarian news outlets tracked by Körkép.',
 };
 
+const biasOrder: Record<string, number> = {
+  left: 0,
+  'center-left': 1,
+  center: 2,
+  'center-right': 3,
+  right: 4,
+};
+
 export default async function SourcesPage() {
   const { data: sources } = await getSources();
+
+  const sorted = [...sources].sort(
+    (a, b) => (biasOrder[a.biasRating] ?? 2) - (biasOrder[b.biasRating] ?? 2),
+  );
 
   return (
     <div className="flex flex-col gap-8">
@@ -35,7 +47,7 @@ export default async function SourcesPage() {
       <BiasSpectrum sources={sources} />
 
       <div className="grid gap-3 sm:grid-cols-2">
-        {sources.map((source) => (
+        {sorted.map((source) => (
           <a
             key={source.id}
             id={`source-${source.slug}`}

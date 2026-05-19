@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useRef, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useFilter } from './FilterContext';
 import { DateFilter } from './DateFilter';
@@ -35,6 +36,20 @@ const topicIcons: Record<string, React.ReactNode> = {
 export function TopicFilter() {
   const searchParams = useSearchParams();
   const { optimisticTopic, navigate } = useFilter();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    if (menuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [menuOpen]);
 
   function handleClick(topicKey?: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -47,11 +62,54 @@ export function TopicFilter() {
     const qs = params.toString();
     const href = qs ? `/?${qs}` : '/';
     navigate(href, { topic: topicKey ?? null });
+    setMenuOpen(false);
   }
+
+  const activeLabel = optimisticTopic
+    ? topics.find((t) => t.key === optimisticTopic)?.label ?? optimisticTopic
+    : 'All';
 
   return (
     <div className="flex items-center gap-3">
-      <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto scrollbar-none">
+      {/* Mobile: hamburger + dropdown */}
+      <div className="relative flex min-w-0 flex-1 sm:hidden" ref={menuRef}>
+        <button
+          onClick={() => setMenuOpen(!menuOpen)}
+          className="flex items-center gap-2 rounded-full bg-surface px-4 py-2 text-sm font-medium text-foreground"
+        >
+          <HamburgerIcon />
+          <span className="capitalize">{activeLabel}</span>
+          <ChevronIcon open={menuOpen} />
+        </button>
+        {menuOpen && (
+          <div className="absolute left-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-base py-1 shadow-lg">
+            <button
+              onClick={() => handleClick()}
+              className={`flex w-full items-center gap-2.5 px-4 py-2.5 text-sm transition-colors ${
+                !optimisticTopic ? 'bg-surface font-medium text-foreground' : 'text-muted'
+              }`}
+            >
+              <GridIcon />
+              All
+            </button>
+            {topics.map((topic) => (
+              <button
+                key={topic.key}
+                onClick={() => handleClick(topic.key)}
+                className={`flex w-full items-center gap-2.5 px-4 py-2.5 text-sm capitalize transition-colors ${
+                  optimisticTopic === topic.key ? 'bg-surface font-medium text-foreground' : 'text-muted'
+                }`}
+              >
+                {topicIcons[topic.key]}
+                {topic.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop: horizontal pills */}
+      <div className="hidden min-w-0 flex-1 gap-2 overflow-x-auto scrollbar-none sm:flex">
         <FilterPill onClick={() => handleClick()} active={!optimisticTopic} icon={<GridIcon />}>
           All
         </FilterPill>
@@ -95,6 +153,34 @@ function FilterPill({
       {icon}
       {children}
     </button>
+  );
+}
+
+function HamburgerIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <line x1="2" y1="4" x2="14" y2="4" />
+      <line x1="2" y1="8" x2="14" y2="8" />
+      <line x1="2" y1="12" x2="14" y2="12" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`transition-transform ${open ? 'rotate-180' : ''}`}
+    >
+      <path d="M3 4.5L6 7.5L9 4.5" />
+    </svg>
   );
 }
 
