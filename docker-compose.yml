@@ -66,16 +66,25 @@ services:
       retries: 5
       start_period: 10s
 
-  scraper:
+  pipeline:
     build:
       context: .
-      dockerfile: apps/scraper/Dockerfile
+      dockerfile: apps/workers/Dockerfile
+    command: ["node", "dist/pipeline/scrape-job.js"]
     environment:
       DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep
       REDIS_URL: redis://redis:6379
+      AUTO_CHAIN: "true"
+      TRIGGER_MODE: "manual"
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       GOOGLE_AI_STUDIO_API_KEY: ${GOOGLE_AI_STUDIO_API_KEY}
       BATCH_CLUSTERER_URL: http://batch-clusterer:8101
+      LLM_CONCURRENCY: ${LLM_CONCURRENCY:-5}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini-fallback}
+      LLM_MODEL: ${LLM_MODEL:-google/gemma-4-26b-a4b-it}
+      EMBEDDING_CONCURRENCY: ${EMBEDDING_CONCURRENCY:-15}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
+      NEXT_JOB: process
       CLUSTER_SIMILARITY_THRESHOLD: ${CLUSTER_SIMILARITY_THRESHOLD:-0.72}
       CLUSTER_TIME_WINDOW_HOURS: ${CLUSTER_TIME_WINDOW_HOURS:-24}
       CLUSTER_MAX_SIZE: ${CLUSTER_MAX_SIZE:-12}
@@ -121,15 +130,16 @@ services:
   recluster:
     build:
       context: .
-      dockerfile: apps/scraper/Dockerfile
+      dockerfile: apps/workers/Dockerfile
     command: ["node", "dist/recluster.js"]
     environment:
       DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       BATCH_CLUSTERER_URL: http://batch-clusterer:8101
       RECLUSTER_NO_CACHE: ${RECLUSTER_NO_CACHE:-0}
-      STORY_MODEL_OVERRIDE: ${STORY_MODEL_OVERRIDE:-}
-      FORCE_OPENROUTER: "1"
+      RECLUSTER_LLM_PROVIDER: "openrouter"
+      RECLUSTER_LLM_MODEL: ${RECLUSTER_LLM_MODEL:-google/gemma-4-31b-it}
+      TRIGGER_MODE: "manual"
       LLM_USAGE_LOG: "0"
       CLUSTER_SIMILARITY_THRESHOLD: ${CLUSTER_SIMILARITY_THRESHOLD:-0.72}
       CLUSTER_TIME_WINDOW_HOURS: ${CLUSTER_TIME_WINDOW_HOURS:-24}
@@ -141,7 +151,6 @@ services:
       RECLUSTER_MERGE_THRESHOLD: ${RECLUSTER_MERGE_THRESHOLD:-0.85}
       RECLUSTER_MERGE_MAX_SIZE: ${RECLUSTER_MERGE_MAX_SIZE:-24}
       RECLUSTER_LLM_CONCURRENCY: "15"
-      REPAIR_ANALYSIS_CONCURRENCY: "15"
     depends_on:
       postgres:
         condition: service_healthy
@@ -155,7 +164,7 @@ services:
   reembed:
     build:
       context: .
-      dockerfile: apps/scraper/Dockerfile
+      dockerfile: apps/workers/Dockerfile
     command: ["node", "dist/reembed.js"]
     environment:
       DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep
@@ -171,7 +180,7 @@ services:
   resummarize:
     build:
       context: .
-      dockerfile: apps/scraper/Dockerfile
+      dockerfile: apps/workers/Dockerfile
     command: ["node", "dist/resummarize.js"]
     environment:
       DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep
@@ -188,7 +197,7 @@ services:
   diagnostics:
     build:
       context: .
-      dockerfile: apps/scraper/Dockerfile
+      dockerfile: apps/workers/Dockerfile
     command: ["node", "dist/diagnostics.js"]
     environment:
       DATABASE_URL: postgres://korkep:korkep@postgres:5432/korkep

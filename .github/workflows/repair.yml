@@ -1,0 +1,46 @@
+name: Repair missing data
+
+on:
+  schedule:
+    - cron: '20 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      lookback_hours:
+        description: 'Repair lookback window in hours'
+        required: false
+        default: '24'
+      grace_minutes:
+        description: 'Skip records newer than this many minutes'
+        required: false
+        default: '90'
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run repair
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TRIGGER_MODE: scheduled
+          REPAIR_LOOKBACK_HOURS: ${{ github.event.inputs.lookback_hours || '24' }}
+          REPAIR_GRACE_MINUTES: ${{ github.event.inputs.grace_minutes || '90' }}
+          REPAIR_MAX_ARTICLES: 100
+          REPAIR_MAX_STORIES: 50
+          REPAIR_ANALYSIS_CONCURRENCY: 1
+          REPAIR_EMBEDDING_BATCH_SIZE: 50
+        run: pnpm --filter @korkep/workers exec tsx src/repair.ts
