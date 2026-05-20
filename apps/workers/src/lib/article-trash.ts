@@ -23,20 +23,29 @@ export interface TrashArticleInput {
 
 const SOURCE_BOOSTS = new Set(['ripost', 'origo', 'metropol', 'blikk']);
 
-const LOW_VALUE_PATTERNS: Array<{ id: string; pattern: RegExp; weight: number }> = [
+const LOW_VALUE_TITLE_PATTERNS: Array<{ id: string; pattern: RegExp; weight: number }> = [
   { id: 'sexualized', pattern: /\b(dogos|szexi|szexizik|bikini|meztelen|falatnyi)\b/, weight: 3 },
   { id: 'celebrity', pattern: /\b(celeb|sztar|tv-sztar|enekesno|modell|influenszer|vip)\b/, weight: 2 },
   { id: 'gallery', pattern: /\b(fotok|videok|galeria|kepgaleria|kepek|foto|video)\b/, weight: 2 },
   { id: 'curiosity', pattern: /\b(lelegzetelallito|nem hiszed el|ezt latnod kell|mutatjuk|nezze meg|brutalis atalakulas)\b/, weight: 1 },
+  { id: 'quiz', pattern: /\b(kviz|teszt|tudasproba|optikai illuzio)\b/, weight: 2 },
+  { id: 'horoscope', pattern: /\b(horoszkop|csillagjegy)\b/, weight: 2 },
+  { id: 'travel', pattern: /\b(utazas|utazo|destinations?)\b/, weight: 1 },
+  { id: 'howto', pattern: /\b(recept|tippek|dugulas|vizvezetek-szerelo)\b/, weight: 1 },
 ];
 
 const LOW_VALUE_URL_PATTERNS: Array<{ id: string; pattern: RegExp; weight: number }> = [
   { id: 'url-gallery', pattern: /\/(foto|fotok|video|videok|galeria|kepgaleria)(\/|-|$)/, weight: 2 },
   { id: 'url-entertainment', pattern: /\/(sztar|sztardzsusz|celeb|vip|bulvar|eletmod|szorakozas)(\/|-|$)/, weight: 2 },
+  { id: 'url-lifestyle', pattern: /\/(mindekozben|ezo|huha|tippek|utazas|szorakozas|sztarvilag)(\/|-|$)/, weight: 2 },
 ];
 
 const LOW_VALUE_CATEGORY_PATTERNS: Array<{ id: string; pattern: RegExp; weight: number }> = [
-  { id: 'category-entertainment', pattern: /\b(vip|sztar|sztardzsusz|celeb|bulvar|eletmod|szorakozas|showbiz)\b/, weight: 2 },
+  {
+    id: 'category-entertainment',
+    pattern: /\b(hazai sztarok|nemzetkozi sztarok|sztarvilag|mindekozben|ezo|huha|tippek|vip|sztar|sztardzsusz|celeb|bulvar|eletmod|szorakozas|showbiz|utazas|kviz|horoszkop|csillagjegy)\b/,
+    weight: 2,
+  },
 ];
 
 const PUBLIC_INTEREST_PATTERNS: Array<{ id: string; pattern: RegExp }> = [
@@ -66,7 +75,7 @@ export function classifyTrashArticle(input: TrashArticleInput): TrashClassificat
   const signals: string[] = [];
   let score = 0;
 
-  for (const rule of LOW_VALUE_PATTERNS) {
+  for (const rule of LOW_VALUE_TITLE_PATTERNS) {
     if (rule.pattern.test(title)) {
       signals.push(rule.id);
       score += rule.weight;
@@ -98,7 +107,7 @@ export function classifyTrashArticle(input: TrashArticleInput): TrashClassificat
     score += 1;
   }
 
-  if (score >= 5) {
+  if (score >= 3) {
     return {
       action: 'discard',
       reason: 'Low-value celebrity, gallery, video, or entertainment item without public-interest signals',
@@ -129,4 +138,3 @@ function normalize(value: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
-
