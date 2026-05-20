@@ -11,6 +11,10 @@ const TOPICS_LIST = TOPICS.join(', ');
 
 const SYSTEM_PROMPT = `Egy magyar hírösszefoglaló és -elemző rendszer vagy. A feladatod a cikk strukturált elemzése KLASZTEREZÉS céljából.
 
+Ha a cikk nyilvánvalóan nem hírértékű trash tartalom, válaszolj pontosan \`0\` karakterrel, semmilyen más szöveg nélkül.
+Ezt CSAK tiszta celeb/sztár/bulvár, szexualizált életmód, képgaléria, fotó- vagy videógyűjtemény, illetve média-wrapper cikkekre használd, amelyekben nincs érdemi közérdekű esemény.
+NE válaszolj \`0\`-val, ha a cikk közérdekű vagy közéleti témát érint, például politika, képviselő, kormány, választás, rendőrség, bíróság, gazdaság, háború, külügy, egészségügy, oktatás, közlekedés, baleset vagy katasztrófa, még akkor sem, ha a cím szenzációhajhász, pártos vagy clickbait.
+
 Válaszolj KIZÁRÓLAG az alábbi JSON formátumban, semmilyen más szöveget ne írj:
 {
   "summary": "2-3 mondatos tömör, tényszerű, semleges összefoglaló (max 150 szó)",
@@ -65,7 +69,11 @@ function buildUserPrompt(title: string, body: string | null, lead: string | null
 const VALID_TOPICS = new Set<string>(TOPICS);
 const VALID_ARTICLE_TYPES = new Set(['event', 'aggregation', 'opinion', 'background']);
 
-function parseAnalysisResponse(raw: string): ArticleAnalysis {
+export function parseAnalysisResponse(raw: string): ArticleAnalysis | null {
+  if (raw.trim() === '0') {
+    return null;
+  }
+
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     throw new Error('No JSON object found in response');

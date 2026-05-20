@@ -12,6 +12,7 @@ export interface StoryMatch {
   clusterKey: string;
   storyId: number | null;
   articleIds: number[];
+  changedArticleIds: number[];
 }
 
 export interface ArticleAssignmentChange {
@@ -53,6 +54,7 @@ export function planStoryReconciliation(input: {
 
   const usedStoryIds = new Set<number>();
   const storyMatches: StoryMatch[] = [];
+  const storyIdsThatLoseArticles = new Set<number>();
 
   for (const cluster of input.finalClusters) {
     const articleIds = uniqueSorted(cluster.articleIds);
@@ -77,33 +79,48 @@ export function planStoryReconciliation(input: {
 
     const best = [...candidates.values()].sort(compareCandidate)[0];
     if (best) usedStoryIds.add(best.storyId);
+    const storyId = best?.storyId ?? null;
+    const changedArticleIds = storyId == null
+      ? []
+      : articleIds.filter((articleId) => input.currentAssignments.get(articleId) !== storyId);
+
+    for (const articleId of changedArticleIds) {
+      const previousStoryId = input.currentAssignments.get(articleId);
+      if (previousStoryId != null && previousStoryId !== storyId) {
+        storyIdsThatLoseArticles.add(previousStoryId);
+      }
+    }
 
     storyMatches.push({
       clusterKey: cluster.clusterKey,
-      storyId: best?.storyId ?? null,
+      storyId,
       articleIds,
+      changedArticleIds,
     });
+  }
+
+  const finalAssignedArticleIds = new Set(storyMatches.flatMap((match) => match.articleIds));
+
+  for (const existing of input.existingStories) {
+    const retained = storyMatches.find((match) => match.storyId === existing.storyId);
+    if (!retained) continue;
+
+    for (const articleId of existing.articleIds) {
+      if (!finalAssignedArticleIds.has(articleId)) {
+        storyIdsThatLoseArticles.add(existing.storyId);
+      }
+    }
   }
 
   const articleAssignments: ArticleAssignmentChange[] = [];
   for (const match of storyMatches) {
     if (match.storyId == null) continue;
-    for (const articleId of match.articleIds) {
-      if (input.currentAssignments.get(articleId) !== match.storyId) {
-        articleAssignments.push({ articleId, storyId: match.storyId });
-      }
+    for (const articleId of match.changedArticleIds) {
+      articleAssignments.push({ articleId, storyId: match.storyId });
     }
   }
 
-  const assignedExistingStoryIds = new Set<number>();
-  for (const match of storyMatches) {
-    if (match.storyId != null) assignedExistingStoryIds.add(match.storyId);
-  }
-
-  const storyIdsToCheckForDeletion = input.existingStories
-    .map((story) => story.storyId)
-    .filter((storyId) => !assignedExistingStoryIds.has(storyId))
-    .sort((a, b) => a - b);
+  const storyIdsToCheckForDeletion = [...storyIdsThatLoseArticles].sort((a, b) => a - b);
 
   return { storyMatches, articleAssignments, storyIdsToCheckForDeletion };
 }

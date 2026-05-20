@@ -36,6 +36,12 @@ export const config = {
     concurrency: parseIntInRange(process.env.EMBEDDING_CONCURRENCY, 10, 1, 20),
     batchSize: parseIntInRange(process.env.EMBEDDING_BATCH_SIZE, 50, 1, 200),
     storyConcurrency: parseIntInRange(process.env.STORY_ASSIGN_CONCURRENCY, 2, 1, 5),
+    storyAssignLookbackHours: parseIntInRange(
+      process.env.STORY_ASSIGN_LOOKBACK_HOURS ?? process.env.CLUSTER_TIME_WINDOW_HOURS,
+      24,
+      1,
+      168,
+    ),
     requestTimeoutMs: parseIntInRange(process.env.EMBEDDING_REQUEST_TIMEOUT_MS, 45_000, 5_000, 180_000),
     model: process.env.EMBEDDING_MODEL ?? 'qwen/qwen3-embedding-8b',
     dimensions: parseIntInRange(process.env.EMBEDDING_DIMENSIONS, 1024, 128, 4096),
@@ -50,6 +56,12 @@ export const config = {
     maxPerDay: 1450,
   },
   recluster: {
+    seedHours: parseIntInRange(
+      process.env.RECLUSTER_SEED_HOURS ?? process.env.CLUSTER_TIME_WINDOW_HOURS,
+      24,
+      1,
+      168,
+    ),
     noCache: process.env.RECLUSTER_NO_CACHE === '1' || process.env.RECLUSTER_NO_CACHE === 'true',
     llmConcurrency: parseIntInRange(process.env.RECLUSTER_LLM_CONCURRENCY, 1, 1, 15),
     llmProvider: (process.env.RECLUSTER_LLM_PROVIDER ?? 'gemini-fallback') as 'openrouter' | 'gemini-fallback',

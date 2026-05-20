@@ -6,6 +6,8 @@ import { SOURCES } from '@korkep/shared';
 import { config } from '../config.js';
 import { db, pool, schema } from '../lib/db.js';
 import { fingerprint } from '../lib/fingerprint.js';
+import { logArticleDiscards, type ArticleDiscardLogInput } from '../lib/article-discard-log.js';
+import { classifyTrashArticle, type TrashClassification } from '../lib/article-trash.js';
 import { logger } from '../logger.js';
 import { queuePush, disconnectQueue, QUEUE_PROCESS } from './queue.js';
 import { triggerNextJob } from './trigger.js';
@@ -96,6 +98,107 @@ export function filterNewCandidatesByUrl(
   return candidates.filter((candidate) => !existingUrls.has(candidate.url));
 }
 
+export function filterCandidatesByTrash(
+  candidates: ArticleCandidate[],
+  sourceSlug: string,
+): {
+  kept: ArticleCandidate[];
+  discarded: Array<{ candidate: ArticleCandidate; classification: Extract<TrashClassification, { action: 'discard' }> }>;
+} {
+  const kept: ArticleCandidate[] = [];
+  const discarded: Array<{ candidate: ArticleCandidate; classification: Extract<TrashClassification, { action: 'discard' }> }> = [];
+
+  for (const candidate of candidates) {
+    const classification = classifyTrashArticle({
+      sourceSlug,
+      url: candidate.url,
+      title: candidate.title,
+      lead: candidate.lead,
+      category: candidate.category,
+      imageUrl: candidate.imageUrl,
+      stage: 'candidate',
+    });
+
+    if (classification.action === 'discard') {
+      discarded.push({ candidate, classification });
+    } else {
+      kept.push(candidate);
+    }
+  }
+
+  return { kept, discarded };
+}
+
+function filterRawArticlesByTrash(
+  articles: RawArticle[],
+  sourceSlug: string,
+): {
+  kept: RawArticle[];
+  discarded: Array<{ article: RawArticle; classification: Extract<TrashClassification, { action: 'discard' }> }>;
+} {
+  const kept: RawArticle[] = [];
+  const discarded: Array<{ article: RawArticle; classification: Extract<TrashClassification, { action: 'discard' }> }> = [];
+
+  for (const article of articles) {
+    const classification = classifyTrashArticle({
+      sourceSlug,
+      url: article.url,
+      title: article.title,
+      lead: article.lead,
+      body: article.body,
+      category: article.category,
+      imageUrl: article.imageUrl,
+      stage: 'extracted',
+    });
+
+    if (classification.action === 'discard') {
+      discarded.push({ article, classification });
+    } else {
+      kept.push(article);
+    }
+  }
+
+  return { kept, discarded };
+}
+
+function candidateDiscardLogInput(
+  sourceId: number,
+  sourceSlug: string,
+  discarded: Array<{ candidate: ArticleCandidate; classification: Extract<TrashClassification, { action: 'discard' }> }>,
+): ArticleDiscardLogInput[] {
+  return discarded.map(({ candidate, classification }) => ({
+    sourceId,
+    sourceSlug,
+    url: candidate.url,
+    title: candidate.title,
+    category: candidate.category ?? null,
+    reason: classification.reason,
+    ruleId: classification.ruleId,
+    confidence: classification.confidence,
+    stage: 'candidate',
+    publishedAt: candidate.publishedAt ?? null,
+  }));
+}
+
+function articleDiscardLogInput(
+  sourceId: number,
+  sourceSlug: string,
+  discarded: Array<{ article: RawArticle; classification: Extract<TrashClassification, { action: 'discard' }> }>,
+): ArticleDiscardLogInput[] {
+  return discarded.map(({ article, classification }) => ({
+    sourceId,
+    sourceSlug,
+    url: article.url,
+    title: article.title,
+    category: article.category ?? null,
+    reason: classification.reason,
+    ruleId: classification.ruleId,
+    confidence: classification.confidence,
+    stage: 'extracted',
+    publishedAt: article.publishedAt ?? null,
+  }));
+}
+
 export async function main() {
   const startTime = Date.now();
   const initialMemory = process.memoryUsage();
@@ -118,6 +221,7 @@ export async function main() {
   let duplicates = 0;
   let missingSource = 0;
   let skipped = 0;
+  let trashDiscarded = 0;
   let adapterErrors = 0;
 
   const newArticleIds: number[] = [];
@@ -183,22 +287,28 @@ export async function main() {
             : [];
 
           const existingUrls = new Set(existingUrlRows.map((row) => row.url));
-          const candidatesToExtract = filterNewCandidatesByUrl(candidates, existingUrls);
+          const newCandidates = filterNewCandidatesByUrl(candidates, existingUrls);
+          const candidateTrash = filterCandidatesByTrash(newCandidates, source.slug);
+          const candidatesToExtract = candidateTrash.kept;
 
-          duplicates += candidates.length - candidatesToExtract.length;
+          trashDiscarded += candidateTrash.discarded.length;
+          await logArticleDiscards(candidateDiscardLogInput(sourceId, source.slug, candidateTrash.discarded));
+
+          duplicates += candidates.length - newCandidates.length;
 
           logger.info(
             {
               sourceSlug: source.slug,
               candidates: candidates.length,
               existingUrls: existingUrls.size,
+              trashDiscarded: candidateTrash.discarded.length,
               candidatesToExtract: candidatesToExtract.length,
             },
             'Early URL duplicate filtering complete',
           );
 
           const extractLimit = pLimit(config.scrape.extractConcurrency);
-          const articles = await withSourceTimeout(
+          const extractedArticles = await withSourceTimeout(
             source.slug,
             Promise.all(
               candidatesToExtract.map((candidate) =>
@@ -207,11 +317,23 @@ export async function main() {
             ).then((results) => results.filter((article): article is RawArticle => article !== null)),
           );
 
+          const extractedTrash = filterRawArticlesByTrash(extractedArticles, source.slug);
+          const articles = extractedTrash.kept;
+          trashDiscarded += extractedTrash.discarded.length;
+          await logArticleDiscards(articleDiscardLogInput(sourceId, source.slug, extractedTrash.discarded));
+
           const fetchDurationMs = Date.now() - sourceFetchStart;
           const stats = adapter.getStats();
 
           logger.info(
-            { sourceSlug: source.slug, count: articles.length, durationMs: fetchDurationMs, stats },
+            {
+              sourceSlug: source.slug,
+              count: articles.length,
+              extracted: extractedArticles.length,
+              trashDiscarded: extractedTrash.discarded.length,
+              durationMs: fetchDurationMs,
+              stats,
+            },
             'Articles fetched from adapter',
           );
 
@@ -496,6 +618,7 @@ export async function main() {
       inserted,
       duplicates,
       skipped,
+      trashDiscarded,
       missingSource,
       adapterErrors,
       newArticleIds: newArticleIds.length,

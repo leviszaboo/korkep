@@ -1,5 +1,6 @@
 import { sql, eq } from 'drizzle-orm';
 import { db, schema } from '../lib/db.js';
+import { config } from '../config.js';
 import { CLUSTERING } from '@korkep/shared';
 
 const MAX_CLUSTER_SIZE = CLUSTERING.maxClusterSize;
@@ -96,8 +97,10 @@ export async function assignStory(
   embedding: number[],
   sourceId: number,
   articleEntities?: string[] | null,
+  articleSummary?: string | null,
+  matchingText = articleTitle,
 ): Promise<number> {
-  const cutoff = new Date(Date.now() - CLUSTERING.timeWindowHours * 60 * 60 * 1000);
+  const cutoff = new Date(Date.now() - config.embedding.storyAssignLookbackHours * 60 * 60 * 1000);
   const vectorLiteral = `[${embedding.join(',')}]`;
 
   const candidates = await db.execute<{
@@ -116,14 +119,14 @@ export async function assignStory(
       1 - (centroid_embedding <=> ${vectorLiteral}::vector) AS similarity
     FROM stories
     WHERE centroid_embedding IS NOT NULL
-      AND created_at > ${cutoff.toISOString()}
+      AND updated_at > ${cutoff.toISOString()}
       AND 1 - (centroid_embedding <=> ${vectorLiteral}::vector) > ${CLUSTERING.similarityThreshold - 0.05}
     ORDER BY similarity DESC
     LIMIT 10
   `);
 
   const rows = candidates.rows ?? [];
-  const newTokens = significantTokens(articleTitle);
+  const newTokens = significantTokens(matchingText);
   const newEntities = articleEntities ?? [];
 
   let bestStoryId: number | null = null;
@@ -183,7 +186,7 @@ export async function assignStory(
       const bestRow = locked.rows?.[0];
       if (!bestRow) throw new Error(`Story ${bestStoryId} disappeared during assignment`);
       if (bestRow.article_count >= MAX_CLUSTER_SIZE) {
-        return createStory(tx, articleTitle, embedding, newEntities, vectorLiteral);
+        return createStory(tx, articleTitle, embedding, newEntities, vectorLiteral, articleSummary);
       }
 
       const [existingSources, newSourceBias] = await Promise.all([
@@ -233,7 +236,7 @@ export async function assignStory(
   }
 
   // No match — create new story with this article's embedding as initial centroid
-  return createStory(db, articleTitle, embedding, newEntities, vectorLiteral);
+  return createStory(db, articleTitle, embedding, newEntities, vectorLiteral, articleSummary);
 }
 
 async function createStory(
@@ -242,11 +245,13 @@ async function createStory(
   _embedding: number[],
   newEntities: string[],
   vectorLiteral: string,
+  articleSummary?: string | null,
 ): Promise<number> {
   const [newStory] = await executor
     .insert(schema.stories)
     .values({
       title: articleTitle,
+      summary: articleSummary ?? null,
       articleCount: 1,
       sourceCount: 1,
       relevanceScore: computeRelevanceScore(1, 1, 1),

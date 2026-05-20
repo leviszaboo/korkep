@@ -1,4 +1,5 @@
 import { eq, inArray } from 'drizzle-orm';
+import { pathToFileURL } from 'node:url';
 import { truncateForEmbedding } from '@korkep/shared';
 import { config } from '../config.js';
 import { db, pool, schema } from '../lib/db.js';
@@ -76,6 +77,18 @@ type EmbedArticle = {
   sourceId: number;
   url: string;
 };
+
+export function buildStoryAssignmentInput(article: Pick<EmbedArticle, 'title' | 'summary'>): {
+  storyTitle: string;
+  storySummary: string | null;
+  matchingText: string;
+} {
+  return {
+    storyTitle: article.title,
+    storySummary: article.summary,
+    matchingText: article.summary ?? article.title,
+  };
+}
 
 async function processBatch(
   articleIds: number[],
@@ -188,11 +201,14 @@ async function assignStoriesWithConcurrency(
           }
 
           try {
+            const assignmentInput = buildStoryAssignmentInput(article);
             const storyId = await assignStory(
-              article.summary ?? article.title,
+              assignmentInput.storyTitle,
               embeddings[index],
               article.sourceId,
               article.entities,
+              assignmentInput.storySummary,
+              assignmentInput.matchingText,
             );
             results[index] = { storyId, error: false };
           } catch (err) {
@@ -213,7 +229,9 @@ async function assignStoriesWithConcurrency(
   return results;
 }
 
-const isDirectRun = process.argv[1]?.includes('embed-cluster-job');
+const isDirectRun = process.argv[1]
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
+  : false;
 if (isDirectRun) {
   main().catch((err) => {
     logger.fatal({ err }, 'Embed+Cluster job failed');

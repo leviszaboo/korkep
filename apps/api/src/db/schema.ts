@@ -126,3 +126,27 @@ export const llmUsageLog = pgTable(
     index('idx_llm_usage_log_mode').on(table.mode),
   ],
 );
+
+export const articleDiscardLog = pgTable(
+  'article_discard_log',
+  {
+    id: serial('id').primaryKey(),
+    sourceId: integer('source_id').references(() => sources.id),
+    sourceSlug: text('source_slug').notNull(),
+    url: text('url').notNull(),
+    title: text('title').notNull(),
+    category: text('category'),
+    reason: text('reason').notNull(),
+    ruleId: text('rule_id').notNull(),
+    confidence: real('confidence').notNull(),
+    stage: text('stage').notNull(),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    discardedAt: timestamp('discarded_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_article_discard_log_url').on(table.url),
+    index('idx_article_discard_log_discarded_at').on(table.discardedAt),
+    index('idx_article_discard_log_source_slug').on(table.sourceSlug),
+    index('idx_article_discard_log_rule_id').on(table.ruleId),
+  ],
+);

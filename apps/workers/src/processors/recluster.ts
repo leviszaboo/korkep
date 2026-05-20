@@ -1,7 +1,6 @@
 import { and, gt, inArray, lte, sql } from 'drizzle-orm';
 import { db, schema } from '../lib/db.js';
 import { config } from '../config.js';
-import { CLUSTERING } from '@korkep/shared';
 import { generateStoryTitleAndSummary, type StoryTitleResult } from '../processors/summarizer.js';
 import { mergeEntitiesFuzzy } from '../processors/clusterer.js';
 import { averageVectors, buildRecursiveMergeGroups, cosineSimilarity } from './recluster-merge.js';
@@ -50,12 +49,26 @@ function aggregateTopics(articleTopics: (string[] | null)[]): string[] {
     .map(([topic]) => topic);
 }
 
+function arraysEqual(a: string[] | null | undefined, b: string[] | null | undefined): boolean {
+  const left = a ?? [];
+  const right = b ?? [];
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
 export async function runRecluster(activity: LlmActivity) {
   logger.info(
-    { noCache: config.recluster.noCache, storyModel: config.recluster.llmModel },
+    {
+      seedHours: config.recluster.seedHours,
+      noCache: config.recluster.noCache,
+      storyModel: config.recluster.llmModel,
+    },
     'Recluster settings',
   );
-  const cutoff = new Date(Date.now() - CLUSTERING.timeWindowHours * 60 * 60 * 1000);
+  const seedCutoff = new Date(Date.now() - config.recluster.seedHours * 60 * 60 * 1000);
 
   const articleColumns = {
     id: schema.articles.id,
@@ -74,7 +87,7 @@ export async function runRecluster(activity: LlmActivity) {
   const recentArticles = await db
     .select(articleColumns)
     .from(schema.articles)
-    .where(gt(schema.articles.createdAt, cutoff));
+    .where(gt(schema.articles.createdAt, seedCutoff));
 
   // Fetch older articles that belong to stories spanning the cutoff boundary
   const activeStoryIds = [...new Set(recentArticles.map((a) => a.storyId).filter((id) => id != null))];
@@ -83,7 +96,7 @@ export async function runRecluster(activity: LlmActivity) {
     olderTails = await db
       .select(articleColumns)
       .from(schema.articles)
-      .where(and(inArray(schema.articles.storyId, activeStoryIds), lte(schema.articles.createdAt, cutoff)));
+      .where(and(inArray(schema.articles.storyId, activeStoryIds), lte(schema.articles.createdAt, seedCutoff)));
     if (olderTails.length > 0) {
       logger.info({ count: olderTails.length, stories: activeStoryIds.length }, 'Fetched older story tails across cutoff boundary');
     }
@@ -93,6 +106,9 @@ export async function runRecluster(activity: LlmActivity) {
 
   // Exclude aggregation articles from clustering — they span multiple stories
   const withEmbeddings = articles.filter((a) => a.embedding != null && a.articleType !== 'aggregation');
+  const scopedStoryIds = [
+    ...new Set(withEmbeddings.map((article) => article.storyId).filter((id): id is number => id != null)),
+  ];
 
   if (withEmbeddings.length < 2) {
     logger.info('Not enough articles with embeddings to recluster');
@@ -154,18 +170,30 @@ export async function runRecluster(activity: LlmActivity) {
   }
 
   // Snapshot existing clusters so we can skip LLM calls for unchanged ones
-  const existingStories = await db
-    .select({
-      id: schema.stories.id,
-      title: schema.stories.title,
-      summary: schema.stories.summary,
-    })
-    .from(schema.stories);
+  const existingStories = scopedStoryIds.length > 0
+    ? await db
+        .select({
+          id: schema.stories.id,
+          title: schema.stories.title,
+          summary: schema.stories.summary,
+          topics: schema.stories.topics,
+          entities: schema.stories.entities,
+          articleCount: schema.stories.articleCount,
+          sourceCount: schema.stories.sourceCount,
+          relevanceScore: schema.stories.relevanceScore,
+          firstSeenAt: schema.stories.firstSeenAt,
+        })
+        .from(schema.stories)
+        .where(inArray(schema.stories.id, scopedStoryIds))
+    : [];
+  const existingStoryById = new Map(existingStories.map((story) => [story.id, story]));
 
-  const existingArticlesByStory = await db
-    .select({ storyId: schema.articles.storyId, articleId: schema.articles.id })
-    .from(schema.articles)
-    .where(sql`${schema.articles.storyId} IS NOT NULL`);
+  const existingArticlesByStory = scopedStoryIds.length > 0
+    ? await db
+        .select({ storyId: schema.articles.storyId, articleId: schema.articles.id })
+        .from(schema.articles)
+        .where(inArray(schema.articles.storyId, scopedStoryIds))
+    : [];
 
   const storyFingerprints = new Map<string, { title: string; summary: string | null }>();
   const storyArticleMap = new Map<number, number[]>();
@@ -499,12 +527,29 @@ export async function runRecluster(activity: LlmActivity) {
   });
 
   const matchByClusterKey = new Map(reconciliation.storyMatches.map((match) => [match.clusterKey, match]));
+  let insertedStories = 0;
+  let updatedStories = 0;
+  let skippedStories = 0;
+  let reassignedArticles = 0;
+  let clearedArticles = 0;
+  let checkedStoryDeletes = 0;
 
   // Persist only the diff so continuing stories keep stable ids.
   await db.transaction(async (tx) => {
     for (const story of finalStories) {
       const match = matchByClusterKey.get(story.clusterKey);
       let storyId = match?.storyId ?? null;
+      const existingStory = storyId == null ? null : existingStoryById.get(storyId);
+      const changedArticleIds = match?.changedArticleIds ?? [];
+      const storyFieldsUnchanged = existingStory != null
+        && existingStory.title === story.title
+        && existingStory.summary === story.summary
+        && arraysEqual(existingStory.topics, story.storyTopics)
+        && arraysEqual(existingStory.entities, story.storyEntities)
+        && existingStory.articleCount === story.articleIds.length
+        && existingStory.sourceCount === story.sourceIds.size
+        && existingStory.relevanceScore === story.relevanceScore
+        && new Date(existingStory.firstSeenAt).getTime() === story.firstSeenAt.getTime();
 
       if (storyId == null) {
         const [newStory] = await tx
@@ -522,7 +567,8 @@ export async function runRecluster(activity: LlmActivity) {
           })
           .returning({ id: schema.stories.id });
         storyId = newStory.id;
-      } else {
+        insertedStories += 1;
+      } else if (!storyFieldsUnchanged || changedArticleIds.length > 0) {
         await tx
           .update(schema.stories)
           .set({
@@ -538,14 +584,17 @@ export async function runRecluster(activity: LlmActivity) {
             updatedAt: new Date(),
           })
           .where(sql`${schema.stories.id} = ${storyId}`);
+        updatedStories += 1;
+      } else {
+        skippedStories += 1;
       }
 
-      const changedArticleIds = story.articleIds.filter((articleId) => currentAssignments.get(articleId) !== storyId);
       if (changedArticleIds.length > 0) {
         await tx
           .update(schema.articles)
           .set({ storyId })
           .where(inArray(schema.articles.id, changedArticleIds));
+        reassignedArticles += changedArticleIds.length;
       }
     }
 
@@ -559,9 +608,11 @@ export async function runRecluster(activity: LlmActivity) {
         .update(schema.articles)
         .set({ storyId: null })
         .where(inArray(schema.articles.id, scopedArticleIdsToClear));
+      clearedArticles += scopedArticleIdsToClear.length;
     }
 
     if (reconciliation.storyIdsToCheckForDeletion.length > 0) {
+      checkedStoryDeletes += reconciliation.storyIdsToCheckForDeletion.length;
       await tx
         .delete(schema.stories)
         .where(and(
@@ -575,7 +626,16 @@ export async function runRecluster(activity: LlmActivity) {
   });
 
   logger.info(
-    { stories: finalStories.length, articles: withEmbeddings.length },
+    {
+      stories: finalStories.length,
+      articles: withEmbeddings.length,
+      insertedStories,
+      updatedStories,
+      skippedStories,
+      reassignedArticles,
+      clearedArticles,
+      checkedStoryDeletes,
+    },
     'Recluster complete',
   );
 }

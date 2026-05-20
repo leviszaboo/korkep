@@ -1,6 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db, pool, schema } from '../lib/db.js';
+import { logArticleDiscard } from '../lib/article-discard-log.js';
+import { classifyTrashArticle } from '../lib/article-trash.js';
 import { buildActivity } from '../lib/llm-usage.js';
 import { analyzeArticle } from '../processors/summarizer.js';
 import { logger } from '../logger.js';
@@ -88,14 +90,13 @@ async function processBatch(
         active++;
 
         processOne(articleId, activity)
-          .then((ok) => {
-            toEmbed.push(articleId);
-            if (ok) succeeded++;
+          .then((result) => {
+            if (result.toEmbed) toEmbed.push(articleId);
+            if (result.succeeded) succeeded++;
             else failed++;
           })
           .catch((err) => {
             logger.error({ err, articleId }, 'Unexpected processOne failure');
-            toEmbed.push(articleId);
             failed++;
           })
           .finally(() => {
@@ -111,22 +112,30 @@ async function processBatch(
   return { toEmbed, succeeded, failed };
 }
 
-async function processOne(articleId: number, activity: ReturnType<typeof buildActivity>): Promise<boolean> {
+async function processOne(
+  articleId: number,
+  activity: ReturnType<typeof buildActivity>,
+): Promise<{ succeeded: boolean; toEmbed: boolean }> {
   const rows = await db
     .select({
       id: schema.articles.id,
+      sourceId: schema.articles.sourceId,
+      sourceSlug: schema.sources.slug,
       title: schema.articles.title,
       body: schema.articles.body,
       lead: schema.articles.lead,
+      category: schema.articles.category,
+      publishedAt: schema.articles.publishedAt,
       url: schema.articles.url,
     })
     .from(schema.articles)
+    .innerJoin(schema.sources, eq(schema.articles.sourceId, schema.sources.id))
     .where(eq(schema.articles.id, articleId))
     .limit(1);
 
   if (rows.length === 0) {
     logger.warn({ articleId }, 'Article not found in DB');
-    return false;
+    return { succeeded: false, toEmbed: false };
   }
 
   const article = rows[0];
@@ -149,14 +158,40 @@ async function processOne(articleId: number, activity: ReturnType<typeof buildAc
         .where(eq(schema.articles.id, articleId));
 
       logger.info({ url: article.url, articleType: analysis.articleType }, 'Article analyzed');
+      return { succeeded: true, toEmbed: true };
     } else {
-      logger.warn({ url: article.url }, 'Article analysis returned null');
-    }
+      const classification = classifyTrashArticle({
+        sourceSlug: article.sourceSlug,
+        url: article.url,
+        title: article.title,
+        lead: article.lead,
+        body: article.body,
+        category: article.category,
+        stage: 'analysis',
+      });
 
-    return true;
+      if (classification.action === 'discard') {
+        await logArticleDiscard({
+          sourceId: article.sourceId,
+          sourceSlug: article.sourceSlug,
+          url: article.url,
+          title: article.title,
+          category: article.category,
+          reason: classification.reason,
+          ruleId: classification.ruleId,
+          confidence: classification.confidence,
+          stage: 'analysis',
+          publishedAt: article.publishedAt,
+        });
+        logger.info({ url: article.url, ruleId: classification.ruleId }, 'Article analysis classified as trash');
+      }
+
+      logger.warn({ url: article.url }, 'Article analysis returned null');
+      return { succeeded: false, toEmbed: false };
+    }
   } catch (err) {
     logger.error({ err, url: article.url }, 'Article analysis failed');
-    return false;
+    return { succeeded: false, toEmbed: false };
   }
 }
 
