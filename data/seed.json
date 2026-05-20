@@ -7,7 +7,7 @@
             "slug": "telex",
             "url": "https://telex.hu",
             "rss_url": "https://telex.hu/rss",
-            "bias_rating": "center",
+            "bias_rating": "left",
             "logo_url": "https://telex.hu/favicon-32x32.png",
             "is_active": true
         },
@@ -27,7 +27,7 @@
             "slug": "hvg",
             "url": "https://hvg.hu",
             "rss_url": "https://hvg.hu/rss",
-            "bias_rating": "center-left",
+            "bias_rating": "left",
             "logo_url": "https://cdn.hvg.hu/assets/hvghu/favicon/favicon-96x96.png",
             "is_active": true
         },

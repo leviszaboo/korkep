@@ -14,6 +14,51 @@ set +a
 
 PROJECT_ID="${GCP_PROJECT_ID:?GCP_PROJECT_ID is required in ${ENV_FILE}}"
 REGION="${GCP_REGION:?GCP_REGION is required in ${ENV_FILE}}"
+API_URL="${API_URL:-${NEXT_PUBLIC_API_URL:-}}"
+LLM_LOOKBACK_DAYS="${LLM_LOOKBACK_DAYS:-${LOOKBACK_DAYS}}"
+
+usage() {
+  cat <<'TXT'
+Usage:
+  deploy/cloud-diagnostics.sh [options]
+
+Options:
+  --llm-lookback-days <days>  Override the LLM usage graph/table lookback window.
+  --help                     Show this help.
+
+Environment:
+  LOOKBACK_DAYS              Default diagnostics lookback window.
+  LLM_LOOKBACK_DAYS          Default LLM usage lookback window. Falls back to LOOKBACK_DAYS.
+  API_URL                    Required for Postgres/LLM diagnostics.
+TXT
+}
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --llm-lookback-days)
+        LLM_LOOKBACK_DAYS="${2:?Missing value for --llm-lookback-days}"
+        shift 2
+        ;;
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  python3 - "$LLM_LOOKBACK_DAYS" <<'PY' >/dev/null
+import sys
+value = float(sys.argv[1])
+if value <= 0:
+    raise SystemExit("LLM lookback days must be greater than zero.")
+PY
+}
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -339,15 +384,166 @@ if len(logs) >= 1:
 PY
 }
 
-run_postgres_diagnostics() {
+render_llm_usage_graphs() {
+  local rows_file
+  rows_file="$(mktemp)"
+  cat >"$rows_file"
+  python3 - "$rows_file" <<'PY'
+import collections
+import sys
+
+rows = []
+for line in open(sys.argv[1]):
+    line = line.rstrip("\n")
+    if not line:
+        continue
+    parts = line.split("\t")
+    if len(parts) != 8:
+        continue
+    activity, mode, provider, operation, requests, prompt_tokens, completion_tokens, total_tokens = parts
+    rows.append({
+        "activity": activity or "(none)",
+        "mode": mode or "(none)",
+        "provider": provider or "(none)",
+        "operation": operation or "(none)",
+        "requests": int(requests or 0),
+        "prompt_tokens": int(prompt_tokens or 0),
+        "completion_tokens": int(completion_tokens or 0),
+        "total_tokens": int(total_tokens or 0),
+    })
+
+def add(grouped, label, row):
+    item = grouped[label]
+    item["requests"] += row["requests"]
+    item["total_tokens"] += row["total_tokens"]
+
+def bar(value, total, width=34):
+    if total <= 0:
+        filled = 0
+    else:
+        filled = round(value / total * width)
+    filled = max(0, min(width, filled))
+    return "#" * filled + "-" * (width - filled)
+
+def pct(value, total):
+    return "n/a" if total <= 0 else f"{value / total * 100:.1f}%"
+
+def chart(title, grouped):
+    print(title)
+    if not grouped:
+        print("  (no rows)")
+        print()
+        return
+    ordered = sorted(grouped.items(), key=lambda kv: (kv[1]["requests"], kv[1]["total_tokens"]), reverse=True)
+    total_requests = sum(v["requests"] for _, v in ordered)
+    total_tokens = sum(v["total_tokens"] for _, v in ordered)
+    label_width = min(max(len(label) for label, _ in ordered), 42)
+    for label, values in ordered:
+        display = label if len(label) <= label_width else label[: label_width - 1] + "~"
+        print(
+            f"  {display:<{label_width}} "
+            f"{values['requests']:>7} req {pct(values['requests'], total_requests):>6} "
+            f"|{bar(values['requests'], total_requests)}| "
+            f"{values['total_tokens']:>9} tok {pct(values['total_tokens'], total_tokens):>6}"
+        )
+    print()
+
+def grouped_by(key):
+    grouped = collections.defaultdict(lambda: {"requests": 0, "total_tokens": 0})
+    for row in rows:
+        add(grouped, row[key], row)
+    return grouped
+
+def grouped_by_many(keys, source_rows):
+    grouped = collections.defaultdict(lambda: {"requests": 0, "total_tokens": 0})
+    for row in source_rows:
+        add(grouped, " / ".join(row[key] for key in keys), row)
+    return grouped
+
+if not rows:
+    print("No LLM usage rows found for this window.")
+    raise SystemExit
+
+chart("Provider execution share", grouped_by("provider"))
+chart("Mode routing share", grouped_by("mode"))
+
+fallback_rows = [row for row in rows if row["mode"] == "gemini-fallback"]
+chart("Gemini fallback executions by provider", grouped_by_many(["provider"], fallback_rows))
+
+print("Mode x provider requests")
+by_mode = collections.defaultdict(list)
+for row in rows:
+    by_mode[row["mode"]].append(row)
+for mode in sorted(by_mode):
+    grouped = grouped_by_many(["provider"], by_mode[mode])
+    total = sum(v["requests"] for v in grouped.values())
+    print(f"  {mode}")
+    for provider, values in sorted(grouped.items(), key=lambda kv: kv[1]["requests"], reverse=True):
+        print(f"    {provider:<24} {values['requests']:>7} req {pct(values['requests'], total):>6} |{bar(values['requests'], total, 24)}|")
+print()
+
+chart("Activity x mode/provider requests", grouped_by_many(["activity", "mode", "provider"], rows))
+PY
+  rm -f "$rows_file"
+}
+
+run_llm_usage_graphs() {
+  print_header "LLM Usage Graphs"
+
+  echo "Window: last ${LLM_LOOKBACK_DAYS} day(s)"
+  echo ""
+
+  psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -q -t -A -F $'\t' <<SQL | render_llm_usage_graphs
+SELECT
+  coalesce(activity, '') AS activity,
+  coalesce(mode, '') AS mode,
+  coalesce(provider, '') AS provider,
+  coalesce(operation, '') AS operation,
+  count(*) AS requests,
+  coalesce(sum(prompt_tokens), 0)::bigint AS prompt_tokens,
+  coalesce(sum(completion_tokens), 0)::bigint AS completion_tokens,
+  coalesce(sum(total_tokens), 0)::bigint AS total_tokens
+FROM llm_usage_log
+WHERE called_at >= now() - (${LLM_LOOKBACK_DAYS} * interval '1 day')
+GROUP BY activity, mode, provider, operation
+ORDER BY requests DESC, total_tokens DESC;
+SQL
+}
+
+postgres_diagnostics_skip_reason() {
+  if [ -z "${API_URL:-}" ]; then
+    echo "Set API_URL in ${ENV_FILE} to include Postgres and LLM usage diagnostics."
+    return 0
+  fi
+
   if [ -z "${DATABASE_URL:-}" ]; then
+    echo "Set DATABASE_URL in ${ENV_FILE} to include Postgres and LLM usage diagnostics."
+    return 0
+  fi
+
+  case "$DATABASE_URL" in
+    *"user:pass@ep-example"*|*"example."*|*"YOUR_"*)
+      echo "DATABASE_URL in ${ENV_FILE} still looks like a placeholder; skipping Postgres and LLM usage diagnostics."
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+run_postgres_diagnostics() {
+  local skip_reason
+  if skip_reason="$(postgres_diagnostics_skip_reason)"; then
     print_header "Postgres Diagnostics"
-    echo "Set DATABASE_URL to include Postgres and LLM usage diagnostics."
+    echo "$skip_reason"
     return
   fi
 
   require_cmd psql
   print_header "Postgres Diagnostics"
+  echo "API URL:    ${API_URL}"
+  echo "LLM window: last ${LLM_LOOKBACK_DAYS} day(s)"
+  echo ""
 
   psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 <<SQL
 \\pset pager off
@@ -385,7 +581,7 @@ SELECT
   coalesce(sum(completion_tokens), 0) AS completion_tokens,
   coalesce(sum(total_tokens), 0) AS total_tokens
 FROM llm_usage_log
-WHERE called_at >= now() - interval '${LOOKBACK_DAYS} days'
+WHERE called_at >= now() - (${LLM_LOOKBACK_DAYS} * interval '1 day')
 GROUP BY mode, provider, operation
 ORDER BY total_tokens DESC, requests DESC;
 
@@ -396,10 +592,12 @@ SELECT
   count(*) AS requests,
   coalesce(sum(total_tokens), 0) AS total_tokens
 FROM llm_usage_log
-WHERE called_at >= now() - interval '${LOOKBACK_DAYS} days'
+WHERE called_at >= now() - (${LLM_LOOKBACK_DAYS} * interval '1 day')
 GROUP BY activity, mode, provider
 ORDER BY total_tokens DESC, requests DESC;
 SQL
+
+  run_llm_usage_graphs
 }
 
 run_recommendations() {
@@ -414,8 +612,9 @@ TXT
 }
 
 main() {
-  require_cmd gcloud
   require_cmd python3
+  parse_args "$@"
+  require_cmd gcloud
 
   run_cloud_run_inventory
   run_service_request_usage
@@ -424,4 +623,6 @@ main() {
   run_recommendations
 }
 
-main "$@"
+if [ "${CLOUD_DIAGNOSTICS_TEST:-0}" != "1" ]; then
+  main "$@"
+fi

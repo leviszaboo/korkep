@@ -113,6 +113,13 @@
       "when": 1780084800000,
       "tag": "0015_add_llm_usage_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1780171200000,
+      "tag": "0016_update_source_bias_ratings",
+      "breakpoints": true
     }
   ]
 }

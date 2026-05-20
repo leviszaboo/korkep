@@ -10,6 +10,10 @@ on:
         description: 'Retention window in days'
         required: false
         default: '14'
+      embedding_retention_hours:
+        description: 'Article embedding retention window in hours'
+        required: false
+        default: '48'
 
 jobs:
   prune:
@@ -19,9 +23,92 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           RETENTION_DAYS: ${{ github.event.inputs.retention_days || '14' }}
+          EMBEDDING_RETENTION_HOURS: ${{ github.event.inputs.embedding_retention_hours || '48' }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ARCHIVE_PREFIX: archive
         run: |
+          set -euo pipefail
+
           CUTOFF=$(date -u -d "-${RETENTION_DAYS} days" '+%Y-%m-%d %H:%M:%S')
+          ARCHIVE_DATE=$(date -u '+%Y/%m/%d')
+          ARCHIVE_TS=$(date -u '+%Y%m%dT%H%M%SZ')
+          ARCHIVE_DIR="$RUNNER_TEMP/prune-archive"
+          mkdir -p "$ARCHIVE_DIR"
+
+          R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          : "${R2_ACCOUNT_ID:?Set R2_ACCOUNT_ID secret}"
+          : "${R2_ACCESS_KEY_ID:?Set R2_ACCESS_KEY_ID secret}"
+          : "${R2_SECRET_ACCESS_KEY:?Set R2_SECRET_ACCESS_KEY secret}"
+          : "${R2_BUCKET:?Set R2_BUCKET secret}"
+
+          export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+          export AWS_DEFAULT_REGION="auto"
+
           echo "Pruning articles older than ${CUTOFF} (${RETENTION_DAYS}-day retention)"
+
+          echo "Nulling article embeddings older than ${EMBEDDING_RETENTION_HOURS} hours"
+          NULLED_EMBEDDINGS=$(psql "$DATABASE_URL" -t -A -c "
+            WITH nulled AS (
+              UPDATE articles
+              SET embedding = NULL
+              WHERE embedding IS NOT NULL
+                AND created_at < now() - (${EMBEDDING_RETENTION_HOURS}::text || ' hours')::interval
+              RETURNING id
+            )
+            SELECT count(*) FROM nulled;
+          ")
+          echo "Nulled ${NULLED_EMBEDDINGS} old article embeddings"
+
+          ARTICLES_ARCHIVE="${ARCHIVE_DIR}/articles_${ARCHIVE_TS}.csv.gz"
+          STORIES_ARCHIVE="${ARCHIVE_DIR}/stories_${ARCHIVE_TS}.csv.gz"
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "COPY (
+            SELECT
+              id, source_id, url, title, lead, summary, main_event, story_identity,
+              article_type, location, entities, topics, category, author, image_url,
+              published_at, scraped_at, fingerprint, story_id, created_at
+            FROM articles
+            WHERE scraped_at < '${CUTOFF}'::timestamptz
+            ORDER BY scraped_at, id
+          ) TO STDOUT WITH CSV HEADER" | gzip > "$ARTICLES_ARCHIVE"
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "COPY (
+            WITH deleted_articles AS (
+              SELECT id, story_id
+              FROM articles
+              WHERE scraped_at < '${CUTOFF}'::timestamptz
+            ),
+            stories_after_delete AS (
+              SELECT s.*
+              FROM stories s
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM articles a
+                WHERE a.story_id = s.id
+                  AND NOT EXISTS (
+                    SELECT 1 FROM deleted_articles d WHERE d.id = a.id
+                  )
+              )
+            )
+            SELECT
+              id, title, summary, topic, topics, article_count, source_count,
+              relevance_score, entities, first_seen_at, updated_at, created_at
+            FROM stories_after_delete
+            ORDER BY updated_at, id
+          ) TO STDOUT WITH CSV HEADER" | gzip > "$STORIES_ARCHIVE"
+
+          ARTICLES_KEY="${R2_ARCHIVE_PREFIX}/articles/${ARCHIVE_DATE}/articles_${ARCHIVE_TS}.csv.gz"
+          STORIES_KEY="${R2_ARCHIVE_PREFIX}/stories/${ARCHIVE_DATE}/stories_${ARCHIVE_TS}.csv.gz"
+
+          aws s3 cp "$ARTICLES_ARCHIVE" "s3://${R2_BUCKET}/${ARTICLES_KEY}" --endpoint-url "$R2_ENDPOINT"
+          aws s3 cp "$STORIES_ARCHIVE" "s3://${R2_BUCKET}/${STORIES_KEY}" --endpoint-url "$R2_ENDPOINT"
+
+          echo "Archived articles to s3://${R2_BUCKET}/${ARTICLES_KEY}"
+          echo "Archived stories to s3://${R2_BUCKET}/${STORIES_KEY}"
 
           DELETED=$(psql "$DATABASE_URL" -t -A -c "
             WITH deleted AS (
@@ -61,4 +148,4 @@ jobs:
               AND (s.article_count != sub.ac OR s.source_count != sub.sc);
           "
           echo "Updated story counts"
-          echo "Prune complete: deleted=${DELETED} articles, orphaned=${ORPHANED} stories"
+          echo "Prune complete: nulled_embeddings=${NULLED_EMBEDDINGS}, deleted=${DELETED} articles, orphaned=${ORPHANED} stories"

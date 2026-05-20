@@ -32,6 +32,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build worker dependencies
+        run: pnpm --filter @korkep/workers... build
+
       - name: Run repair
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

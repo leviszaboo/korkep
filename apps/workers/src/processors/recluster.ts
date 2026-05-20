@@ -4,6 +4,8 @@ import { config } from '../config.js';
 import { CLUSTERING } from '@korkep/shared';
 import { generateStoryTitleAndSummary, type StoryTitleResult } from '../processors/summarizer.js';
 import { mergeEntitiesFuzzy } from '../processors/clusterer.js';
+import { averageVectors, buildRecursiveMergeGroups, cosineSimilarity } from './recluster-merge.js';
+import { planStoryReconciliation } from './recluster-reconcile.js';
 import type { LlmActivity } from '../lib/llm-usage.js';
 import { logger } from '../logger.js';
 
@@ -189,6 +191,7 @@ export async function runRecluster(activity: LlmActivity) {
     relevanceScore: number;
     storyTopics: string[];
     storyEntities: string[];
+    centroidEmbedding: number[];
     clusterFingerprint: string;
     clusterArticles: typeof withEmbeddings;
   }
@@ -207,9 +210,10 @@ export async function runRecluster(activity: LlmActivity) {
     const relevanceScore = computeRelevanceScore(sourceIds.size, articleIds.length, biasGroups.size);
     const storyTopics = aggregateTopics(clusterArticles.map((a) => a.topics));
     const storyEntities = mergeEntitiesFuzzy(clusterArticles.flatMap((a) => a.entities ?? []));
+    const centroidEmbedding = averageVectors(clusterArticles.map((a) => a.embedding!));
     const clusterFingerprint = articleIds.slice().sort((a, b) => a - b).join(',');
 
-    clusters.push({ articleIds, sourceIds, biasGroups, firstSeenAt, relevanceScore, storyTopics, storyEntities, clusterFingerprint, clusterArticles });
+    clusters.push({ articleIds, sourceIds, biasGroups, firstSeenAt, relevanceScore, storyTopics, storyEntities, centroidEmbedding, clusterFingerprint, clusterArticles });
   }
 
   // Generate titles and summaries in parallel via OpenRouter
@@ -217,6 +221,7 @@ export async function runRecluster(activity: LlmActivity) {
   const LLM_CONCURRENCY = config.recluster.llmConcurrency;
 
   interface FinalStory {
+    clusterKey: string;
     title: string;
     summary: string | null;
     articleIds: number[];
@@ -226,6 +231,7 @@ export async function runRecluster(activity: LlmActivity) {
     relevanceScore: number;
     storyTopics: string[];
     storyEntities: string[];
+    centroidEmbedding: number[];
   }
 
   const finalStories: FinalStory[] = [];
@@ -235,12 +241,17 @@ export async function runRecluster(activity: LlmActivity) {
       const cached = storyFingerprints.get(cluster.clusterFingerprint);
       if (cached) {
         logger.info({ storyTitle: cached.title, articleCount: cluster.articleIds.length }, 'Reused cached story title/summary');
-        return [{ ...cluster, title: cached.title, summary: cached.summary }];
+        return [{ ...cluster, clusterKey: cluster.clusterFingerprint, title: cached.title, summary: cached.summary }];
       }
     }
 
     if (cluster.articleIds.length < 2) {
-      return [{ ...cluster, title: cluster.clusterArticles[0].title, summary: cluster.clusterArticles[0].summary }];
+      return [{
+        ...cluster,
+        clusterKey: cluster.clusterFingerprint,
+        title: cluster.clusterArticles[0].title,
+        summary: cluster.clusterArticles[0].summary,
+      }];
     }
 
     const articles = cluster.clusterArticles.map((a) => ({ id: a.id, title: a.title, summary: a.summary }));
@@ -286,6 +297,7 @@ export async function runRecluster(activity: LlmActivity) {
         }
 
         subStories.push({
+          clusterKey: groupArticles.map((a) => a.id).sort((a, b) => a - b).join(','),
           title: subTitle,
           summary: subSummary,
           articleIds: groupArticles.map((a) => a.id),
@@ -295,6 +307,7 @@ export async function runRecluster(activity: LlmActivity) {
           relevanceScore: computeRelevanceScore(subSourceIds.size, groupArticles.length, subBiasGroups.size),
           storyTopics: aggregateTopics(groupArticles.map((a) => a.topics)),
           storyEntities: mergeEntitiesFuzzy(groupArticles.flatMap((a) => a.entities ?? [])),
+          centroidEmbedding: averageVectors(groupArticles.map((a) => a.embedding!)),
         });
       }
 
@@ -303,10 +316,15 @@ export async function runRecluster(activity: LlmActivity) {
 
     if (result?.coherent) {
       logger.info({ storyTitle: result.title, articleCount: cluster.articleIds.length }, 'Generated story title');
-      return [{ ...cluster, title: result.title, summary: result.summary }];
+      return [{ ...cluster, clusterKey: cluster.clusterFingerprint, title: result.title, summary: result.summary }];
     }
 
-    return [{ ...cluster, title: cluster.clusterArticles[0].title, summary: cluster.clusterArticles[0].summary }];
+    return [{
+      ...cluster,
+      clusterKey: cluster.clusterFingerprint,
+      title: cluster.clusterArticles[0].title,
+      summary: cluster.clusterArticles[0].summary,
+    }];
   }
 
   let running = 0;
@@ -327,6 +345,7 @@ export async function runRecluster(activity: LlmActivity) {
           .catch((err) => {
             logger.error({ err, articleCount: clusters[idx].articleIds.length }, 'Story title/summary generation failed');
             finalStories.push({
+              clusterKey: clusters[idx].clusterFingerprint,
               title: clusters[idx].clusterArticles[0].title,
               summary: null,
               articleIds: clusters[idx].articleIds,
@@ -336,6 +355,7 @@ export async function runRecluster(activity: LlmActivity) {
               relevanceScore: clusters[idx].relevanceScore,
               storyTopics: clusters[idx].storyTopics,
               storyEntities: clusters[idx].storyEntities,
+              centroidEmbedding: clusters[idx].centroidEmbedding,
             });
           })
           .finally(() => {
@@ -361,53 +381,19 @@ export async function runRecluster(activity: LlmActivity) {
   const mergeMaxSize = config.recluster.postMergeMaxSize;
 
   if (mergeThreshold < 1.0 && finalStories.length > 1) {
-    const centroids: number[][] = finalStories.map((story) => {
-      const vecs = story.articleIds
-        .map((id) => articleMap.get(id)?.embedding)
-        .filter((e): e is number[] => e != null);
-      if (vecs.length === 0) return [];
-      const dim = vecs[0].length;
-      const centroid = new Array(dim).fill(0);
-      for (const v of vecs) {
-        for (let i = 0; i < dim; i++) centroid[i] += v[i];
-      }
-      for (let i = 0; i < dim; i++) centroid[i] /= vecs.length;
-      return centroid;
-    });
-
-    const withCentroid = centroids.filter((c) => c.length > 0).length;
+    const withCentroid = finalStories.filter((s) => s.centroidEmbedding.length > 0).length;
     const multiArticle = finalStories.filter((s) => s.articleIds.length >= 2).length;
     logger.info(
       { totalStories: finalStories.length, withCentroid, multiArticle, threshold: mergeThreshold },
       'Post-merge: starting centroid comparison',
     );
 
-    // Build merge graph via connected components
-    const parent = Array.from({ length: finalStories.length }, (_, i) => i);
-    function find(x: number): number {
-      while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
-      return x;
-    }
-    function union(a: number, b: number) { parent[find(a)] = find(b); }
-
-    function cosineSim(a: number[], b: number[]): number {
-      if (a.length === 0 || b.length === 0) return 0;
-      let dot = 0, magA = 0, magB = 0;
-      for (let i = 0; i < a.length; i++) {
-        dot += a[i] * b[i];
-        magA += a[i] * a[i];
-        magB += b[i] * b[i];
-      }
-      const denom = Math.sqrt(magA) * Math.sqrt(magB);
-      return denom > 0 ? dot / denom : 0;
-    }
-
     // Debug: find top similarities
     const topPairs: { i: number; j: number; sim: number }[] = [];
     for (let i = 0; i < finalStories.length; i++) {
       for (let j = i + 1; j < finalStories.length; j++) {
-        if (centroids[i].length === 0 || centroids[j].length === 0) continue;
-        const sim = cosineSim(centroids[i], centroids[j]);
+        if (finalStories[i].centroidEmbedding.length === 0 || finalStories[j].centroidEmbedding.length === 0) continue;
+        const sim = cosineSimilarity(finalStories[i].centroidEmbedding, finalStories[j].centroidEmbedding);
         if (sim > mergeThreshold - 0.10) {
           topPairs.push({ i, j, sim });
         }
@@ -425,39 +411,19 @@ export async function runRecluster(activity: LlmActivity) {
       logger.info({ top10, threshold: mergeThreshold }, 'Post-merge: top centroid similarities');
     }
 
-    for (let i = 0; i < finalStories.length; i++) {
-      for (let j = i + 1; j < finalStories.length; j++) {
-        if (find(i) === find(j)) continue;
-        const sim = cosineSim(centroids[i], centroids[j]);
-        if (sim >= mergeThreshold) {
-          // Check merged size wouldn't exceed cap
-          const rootI = find(i);
-          const rootJ = find(j);
-          let sizeI = 0, sizeJ = 0;
-          for (let k = 0; k < finalStories.length; k++) {
-            if (find(k) === rootI) sizeI += finalStories[k].articleIds.length;
-            if (find(k) === rootJ) sizeJ += finalStories[k].articleIds.length;
-          }
-          if (sizeI + sizeJ <= mergeMaxSize) {
-            union(i, j);
-          }
-        }
-      }
-    }
+    const mergeGroups = buildRecursiveMergeGroups(
+      finalStories.map((story) => ({
+        articleIds: story.articleIds,
+        centroid: story.centroidEmbedding,
+      })),
+      mergeThreshold,
+      mergeMaxSize,
+    );
 
-    // Collect merged groups
-    const mergeGroups = new Map<number, number[]>();
-    for (let i = 0; i < finalStories.length; i++) {
-      const root = find(i);
-      const group = mergeGroups.get(root) ?? [];
-      group.push(i);
-      mergeGroups.set(root, group);
-    }
-
-    const mergedCount = [...mergeGroups.values()].filter((g) => g.length > 1).length;
+    const mergedCount = mergeGroups.filter((g) => g.length > 1).length;
     if (mergedCount > 0) {
       const mergedStories: FinalStory[] = [];
-      for (const [, indices] of mergeGroups) {
+      for (const indices of mergeGroups) {
         if (indices.length === 1) {
           mergedStories.push(finalStories[indices[0]]);
           continue;
@@ -474,12 +440,18 @@ export async function runRecluster(activity: LlmActivity) {
         const allTopics = aggregateTopics(
           allArticleIds.map((id) => articleMap.get(id)?.topics ?? null),
         );
+        const centroidEmbedding = averageVectors(
+          allArticleIds
+            .map((id) => articleMap.get(id)?.embedding)
+            .filter((embedding): embedding is number[] => embedding != null),
+        );
 
         // Use title from the largest sub-cluster
         const largestIdx = indices.reduce((best, i) =>
           finalStories[i].articleIds.length > finalStories[best].articleIds.length ? i : best, indices[0]);
 
         mergedStories.push({
+          clusterKey: allArticleIds.slice().sort((a, b) => a - b).join(','),
           title: finalStories[largestIdx].title,
           summary: finalStories[largestIdx].summary,
           articleIds: allArticleIds,
@@ -489,6 +461,7 @@ export async function runRecluster(activity: LlmActivity) {
           relevanceScore: computeRelevanceScore(allSourceIds.size, allArticleIds.length, allBiasGroups.size),
           storyTopics: allTopics,
           storyEntities: mergeEntitiesFuzzy(indices.flatMap((i) => finalStories[i].storyEntities)),
+          centroidEmbedding,
         });
       }
 
@@ -501,30 +474,103 @@ export async function runRecluster(activity: LlmActivity) {
     }
   }
 
-  // Swap old clusters for new ones in a single transaction
+  const currentAssignments = new Map<number, number | null>();
+  for (const row of existingArticlesByStory) {
+    currentAssignments.set(row.articleId, row.storyId);
+  }
+  for (const article of withEmbeddings) {
+    if (!currentAssignments.has(article.id)) {
+      currentAssignments.set(article.id, article.storyId);
+    }
+  }
+
+  const existingStoryArticles = [...storyArticleMap.entries()].map(([storyId, articleIds]) => ({
+    storyId,
+    articleIds,
+  }));
+
+  const reconciliation = planStoryReconciliation({
+    existingStories: existingStoryArticles,
+    finalClusters: finalStories.map((story) => ({
+      clusterKey: story.clusterKey,
+      articleIds: story.articleIds,
+    })),
+    currentAssignments,
+  });
+
+  const matchByClusterKey = new Map(reconciliation.storyMatches.map((match) => [match.clusterKey, match]));
+
+  // Persist only the diff so continuing stories keep stable ids.
   await db.transaction(async (tx) => {
-    await tx.update(schema.articles).set({ storyId: null });
-    await tx.delete(schema.stories);
-
     for (const story of finalStories) {
-      const [newStory] = await tx
-        .insert(schema.stories)
-        .values({
-          title: story.title,
-          summary: story.summary,
-          topics: story.storyTopics.length > 0 ? story.storyTopics : null,
-          entities: story.storyEntities.length > 0 ? story.storyEntities : null,
-          articleCount: story.articleIds.length,
-          sourceCount: story.sourceIds.size,
-          relevanceScore: story.relevanceScore,
-          firstSeenAt: story.firstSeenAt,
-        })
-        .returning({ id: schema.stories.id });
+      const match = matchByClusterKey.get(story.clusterKey);
+      let storyId = match?.storyId ?? null;
 
+      if (storyId == null) {
+        const [newStory] = await tx
+          .insert(schema.stories)
+          .values({
+            title: story.title,
+            summary: story.summary,
+            topics: story.storyTopics.length > 0 ? story.storyTopics : null,
+            entities: story.storyEntities.length > 0 ? story.storyEntities : null,
+            articleCount: story.articleIds.length,
+            sourceCount: story.sourceIds.size,
+            relevanceScore: story.relevanceScore,
+            centroidEmbedding: story.centroidEmbedding.length > 0 ? story.centroidEmbedding : null,
+            firstSeenAt: story.firstSeenAt,
+          })
+          .returning({ id: schema.stories.id });
+        storyId = newStory.id;
+      } else {
+        await tx
+          .update(schema.stories)
+          .set({
+            title: story.title,
+            summary: story.summary,
+            topics: story.storyTopics.length > 0 ? story.storyTopics : null,
+            entities: story.storyEntities.length > 0 ? story.storyEntities : null,
+            articleCount: story.articleIds.length,
+            sourceCount: story.sourceIds.size,
+            relevanceScore: story.relevanceScore,
+            centroidEmbedding: story.centroidEmbedding.length > 0 ? story.centroidEmbedding : null,
+            firstSeenAt: story.firstSeenAt,
+            updatedAt: new Date(),
+          })
+          .where(sql`${schema.stories.id} = ${storyId}`);
+      }
+
+      const changedArticleIds = story.articleIds.filter((articleId) => currentAssignments.get(articleId) !== storyId);
+      if (changedArticleIds.length > 0) {
+        await tx
+          .update(schema.articles)
+          .set({ storyId })
+          .where(inArray(schema.articles.id, changedArticleIds));
+      }
+    }
+
+    const assignedArticleIds = new Set(finalStories.flatMap((story) => story.articleIds));
+    const scopedArticleIdsToClear = withEmbeddings
+      .map((article) => article.id)
+      .filter((articleId) => !assignedArticleIds.has(articleId) && currentAssignments.get(articleId) != null);
+
+    if (scopedArticleIdsToClear.length > 0) {
       await tx
         .update(schema.articles)
-        .set({ storyId: newStory.id })
-        .where(inArray(schema.articles.id, story.articleIds));
+        .set({ storyId: null })
+        .where(inArray(schema.articles.id, scopedArticleIdsToClear));
+    }
+
+    if (reconciliation.storyIdsToCheckForDeletion.length > 0) {
+      await tx
+        .delete(schema.stories)
+        .where(and(
+          inArray(schema.stories.id, reconciliation.storyIdsToCheckForDeletion),
+          sql`NOT EXISTS (
+            SELECT 1 FROM ${schema.articles}
+            WHERE ${schema.articles.storyId} = ${schema.stories.id}
+          )`,
+        ));
     }
   });
 

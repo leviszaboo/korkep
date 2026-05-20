@@ -151,7 +151,7 @@ Usage:
   ./deploy/deploy.sh secret [name]           Store or rotate a Secret Manager value
   ./deploy/deploy.sh env                     Manage env profiles
   ./deploy/deploy.sh status                  Show Cloud Run services/jobs/schedulers
-  ./deploy/deploy.sh diagnostics             Run deploy/cloud-diagnostics.sh
+  ./deploy/deploy.sh diagnostics [options]   Run deploy/cloud-diagnostics.sh
 
 Options:
   --env <name>          Use deploy/env.<name>
@@ -162,6 +162,9 @@ Options:
   --no-migrate          For full: skip migrate execution
   --no-schedules        For full: skip scheduler updates
   --yes                 Skip confirmation prompts
+
+Diagnostics options:
+  --llm-lookback-days <days>  Override LLM usage graph/table lookback window
 
 Targets:
   api batch-clusterer migrate scrape process embed-cluster recluster reembed resummarize repair
@@ -202,6 +205,27 @@ run_cmd() {
     echo
   fi
   "$@"
+}
+
+run_cmd_with_retries() {
+  local attempts="$1"
+  local delay_seconds="$2"
+  shift 2
+
+  local attempt=1
+  while true; do
+    if run_cmd "$@"; then
+      return 0
+    fi
+
+    if [[ "$attempt" -ge "$attempts" ]]; then
+      return 1
+    fi
+
+    echo "Command failed; retrying in ${delay_seconds}s (${attempt}/${attempts})..."
+    sleep "$delay_seconds"
+    attempt=$((attempt + 1))
+  done
 }
 
 confirm_action() {
@@ -299,7 +323,7 @@ push_image() {
   local image="$1"
   local tag="${2:-$TAG}"
   header "Push ${image}"
-  run_cmd docker push "$(image_uri "$image" "$tag")"
+  run_cmd_with_retries 3 5 docker push "$(image_uri "$image" "$tag")"
 }
 
 deploy_service_target() {
@@ -373,7 +397,7 @@ job_env_vars() {
     scrape) echo "SCRAPE_CONCURRENCY=${SCRAPE_CONCURRENCY},SCRAPE_EXTRACT_CONCURRENCY=${SCRAPE_EXTRACT_CONCURRENCY},NEXT_JOB=process,TRIGGER_MODE=scheduled" ;;
     process) echo "LLM_CONCURRENCY=${LLM_CONCURRENCY},LLM_PROVIDER=${LLM_PROVIDER},LLM_MODEL=${LLM_MODEL},NEXT_JOB=embed-cluster,TRIGGER_MODE=scheduled" ;;
     embed-cluster) echo "$(cluster_env "$clusterer_url"),EMBEDDING_CONCURRENCY=${EMBEDDING_CONCURRENCY},EMBEDDING_MODEL=${EMBEDDING_MODEL},TRIGGER_MODE=scheduled" ;;
-    recluster) echo "BATCH_CLUSTERER_URL=${clusterer_url},RECLUSTER_NO_CACHE=${RECLUSTER_NO_CACHE},RECLUSTER_MERGE_THRESHOLD=${RECLUSTER_MERGE_THRESHOLD},RECLUSTER_MERGE_MAX_SIZE=${RECLUSTER_MERGE_MAX_SIZE},RECLUSTER_LLM_PROVIDER=${RECLUSTER_LLM_PROVIDER},RECLUSTER_LLM_CONCURRENCY=${RECLUSTER_LLM_CONCURRENCY},TRIGGER_MODE=scheduled" ;;
+    recluster) echo "BATCH_CLUSTERER_URL=${clusterer_url},RECLUSTER_NO_CACHE=${RECLUSTER_NO_CACHE},RECLUSTER_MERGE_THRESHOLD=${RECLUSTER_MERGE_THRESHOLD},RECLUSTER_MERGE_MAX_SIZE=${RECLUSTER_MERGE_MAX_SIZE},RECLUSTER_LLM_PROVIDER=${RECLUSTER_LLM_PROVIDER},RECLUSTER_LLM_MODEL=${RECLUSTER_LLM_MODEL},RECLUSTER_LLM_CONCURRENCY=${RECLUSTER_LLM_CONCURRENCY},TRIGGER_MODE=scheduled" ;;
     reembed) echo "" ;;
     resummarize) echo "SINCE_HOURS=24" ;;
     repair) echo "REPAIR_LOOKBACK_HOURS=${REPAIR_LOOKBACK_HOURS},REPAIR_MAX_ARTICLES=${REPAIR_MAX_ARTICLES},REPAIR_MAX_STORIES=${REPAIR_MAX_STORIES},REPAIR_ANALYSIS_CONCURRENCY=${REPAIR_ANALYSIS_CONCURRENCY},REPAIR_EMBEDDING_BATCH_SIZE=${REPAIR_EMBEDDING_BATCH_SIZE},REPAIR_GRACE_MINUTES=${REPAIR_GRACE_MINUTES},TRIGGER_MODE=scheduled" ;;
@@ -760,7 +784,7 @@ action_status() {
 
 action_diagnostics() {
   load_env
-  DEPLOY_ENV_FILE="$ENV_FILE" "${SCRIPT_DIR}/cloud-diagnostics.sh"
+  DEPLOY_ENV_FILE="$ENV_FILE" "${SCRIPT_DIR}/cloud-diagnostics.sh" "$@"
 }
 
 TARGETS=(api batch-clusterer migrate scrape process embed-cluster recluster reembed resummarize repair)
@@ -855,7 +879,7 @@ interactive_main() {
 
 main() {
   parse_global_options "$@"
-  set -- "${POSITIONAL[@]}"
+  set -- "${POSITIONAL[@]+"${POSITIONAL[@]}"}"
 
   local command="${1:-menu}"
   [[ $# -gt 0 ]] && shift || true
@@ -883,7 +907,7 @@ main() {
     secret) action_secret "${1:-}" ;;
     env) action_env ;;
     status) action_status ;;
-    diagnostics) action_diagnostics ;;
+    diagnostics) action_diagnostics "$@" ;;
     *) echo "Unknown command: $command" >&2; usage >&2; return 2 ;;
   esac
 }

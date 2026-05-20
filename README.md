@@ -337,24 +337,24 @@ All adapter-backed sources are scraped on each scheduled scrape run. In producti
 
 | Source | Bias | Method |
 |--------|------|--------|
-| Telex | center | RSS |
+| Telex | left | RSS |
 | 444.hu | left | RSS |
-| HVG | center-left | RSS |
+| HVG | left | RSS |
 | Index.hu | center-right | RSS |
 | Magyar Nemzet | right | RSS |
 | Origo | right | RSS |
 | 24.hu | center-left | RSS |
 | Mandiner | right | RSS |
-| Blikk | center-right | RSS |
+| Blikk | center | RSS |
 | Magyar Hang | center | RSS |
 | Euronews Hungary | center | RSS |
 | Metropol | right | RSS |
 | Ripost | right | RSS |
-| ATV | left | RSS |
+| ATV | center-left | RSS |
 | Portfolio | center | RSS |
-| Világgazdaság | center-right | RSS |
+| Világgazdaság | right | RSS |
 | Infostart | center | RSS |
 | Pesti Srácok | right | RSS |
-| MTI | center-right | homepage adapter |
+| MTI | center-left | homepage adapter |
 | Kontroll | center-left | RSS |
 | Demokrata | right | RSS |

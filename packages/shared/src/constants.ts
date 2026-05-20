@@ -6,7 +6,7 @@ export const SOURCES: SourceConfig[] = [
     slug: 'telex',
     url: 'https://telex.hu',
     rssUrl: 'https://telex.hu/rss',
-    biasRating: 'center',
+    biasRating: 'left',
     logoUrl: 'https://telex.hu/favicon-32x32.png',
   },
   {
@@ -22,7 +22,7 @@ export const SOURCES: SourceConfig[] = [
     slug: 'hvg',
     url: 'https://hvg.hu',
     rssUrl: 'https://hvg.hu/rss',
-    biasRating: 'center-left',
+    biasRating: 'left',
     logoUrl: 'https://cdn.hvg.hu/assets/hvghu/favicon/favicon-96x96.png',
   },
   {
@@ -70,7 +70,7 @@ export const SOURCES: SourceConfig[] = [
     slug: 'blikk',
     url: 'https://www.blikk.hu',
     rssUrl: 'https://www.blikk.hu/rss',
-    biasRating: 'center-right',
+    biasRating: 'center',
     logoUrl: 'https://ocdn.eu/blikk_static/resource/icons/new/favicon.ico',
   },
   {
@@ -110,7 +110,7 @@ export const SOURCES: SourceConfig[] = [
     slug: 'atv',
     url: 'https://www.atv.hu',
     rssUrl: 'https://www.atv.hu/feed/',
-    biasRating: 'left',
+    biasRating: 'center-left',
     logoUrl: 'https://www.atv.hu/wp-content/uploads/2024/11/favicon-1.ico',
   },
   {
@@ -126,7 +126,7 @@ export const SOURCES: SourceConfig[] = [
     slug: 'vg',
     url: 'https://www.vg.hu',
     rssUrl: 'https://www.vg.hu/publicapi/hu/rss/vilaggazdasag/articles',
-    biasRating: 'center-right',
+    biasRating: 'right',
     logoUrl: 'https://www.vg.hu/favicon-32x32.png',
   },
   {
@@ -150,7 +150,7 @@ export const SOURCES: SourceConfig[] = [
     slug: 'mti',
     url: 'https://mti.hu',
     rssUrl: '',
-    biasRating: 'center-right',
+    biasRating: 'center-left',
     logoUrl: 'https://mti.hu/favicon-32x32.png',
   },
   {

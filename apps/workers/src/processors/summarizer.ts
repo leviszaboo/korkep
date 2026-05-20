@@ -30,6 +30,16 @@ SZABÁLYOK a storyIdentity mezőhöz:
 - Példa: "Orbán beszédet mondott a parlamentben a költségvetésről" vs "Orbán találkozott Zelenszkijjel Kijevben" — ezek KÉT KÜLÖNBÖZŐ story
 - Ha a cikk több különálló eseményt foglal össze (napi összefoglaló, percről percre), az articleType legyen "aggregation"
 
+SZABÁLYOK az entities mezőhöz:
+- Az entities mezőben kanonikus névalakokat adj meg, ne a cikkben látott felszíni említéseket
+- Személyeknél teljes nevet használj, ha a cikkből kikövetkeztethető: "Magyar Péter", ne "Magyar P."
+- Ne írj szerep- vagy tisztségmegjelölést zárójelben a személy nevéhez: "Magyar Péter", ne "Magyar Péter (miniszterelnök-jelölt)"
+- Titulusokat, foglalkozásokat és leíró szerepeket ne olvassz be a névbe; ezek maradjanak a summary/mainEvent mezőben, ha fontosak
+- Szervezeteknél stabil közismert vagy hivatalos nevet használj: "Tisza Párt", "Fidesz", "Nemzeti Adó- és Vámhivatal"
+- Rövidítést csak akkor használj önálló entitásként, ha ez a közismert elsődleges név; különben a teljes nevet add vissza zárójeles rövidítés nélkül
+- Ha több névváltozat ugyanarra az entitásra utal, a legteljesebb magyar kanonikus alakot add vissza
+- Legfeljebb 5 legfontosabb személyt, szervezetet vagy intézményt adj vissza
+
 articleType értékek:
 - "event": egy konkrét eseményről/hírről szól
 - "aggregation": több eseményt összefoglal (napi összefoglaló, hírfolyam, percről percre, élő közvetítés)
@@ -184,7 +194,13 @@ FONTOS: "ugyanaz a téma" NEM jelenti, hogy "ugyanaz a történet"!
 Csak akkor koherens, ha a cikkek UGYANAZT az egy konkrét eseményt/döntést/történést írják le más-más forrásból.
 
 Ha IGEN (koherens klaszter):
-- Írj egy semleges, tömör főcímet (max 15 szó)
+- Írj egy semleges, de konkrét főcímet (max 15 szó)
+- A főcím nevezze meg a központi szereplőt, ha az esemény megértéséhez fontos, akkor is, ha csak egyes források emelik ki
+- A főcím tartalmazzon konkrét cselekvést, döntést vagy eseményt, valamint a lényegi tárgyat vagy következményt
+- Kerüld a homályos ernyőcímeket, ha a konkrét történet megnevezhető: ne "Politikai vita", "Ügy fejleményei", "Közlekedési helyzet"
+- Ne használj értékelő vagy pártos keretezést; a források állításait semleges igékkel foglald össze
+- Példa: "Magyar Péter Donald Tuskkal tárgyalt Varsóban", ne "Politikai egyeztetés Lengyelországban"
+- Példa: "A rendőrség nyomoz a szegedi BYD-beruházás földlerakása miatt", ne "BYD-ügy fejleményei"
 - Írj egy 2-3 mondatos semleges összefoglalót, amely szintetizálja a különböző források információit
 - FONTOS: Nyelvtanilag hibátlan, helyes magyar nyelven fogalmazz
 

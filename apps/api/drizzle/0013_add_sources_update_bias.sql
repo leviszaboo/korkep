@@ -1,12 +1,12 @@
 -- Update bias ratings for existing sources
 UPDATE "sources" SET "bias_rating" = 'center-right' WHERE "slug" = 'index';
-UPDATE "sources" SET "bias_rating" = 'center-right' WHERE "slug" = 'blikk';
+UPDATE "sources" SET "bias_rating" = 'center' WHERE "slug" = 'blikk';
 UPDATE "sources" SET "bias_rating" = 'center' WHERE "slug" = 'hang';
 
 -- Add new sources
 INSERT INTO "sources" ("name", "slug", "url", "rss_url", "bias_rating", "logo_url")
 VALUES
-  ('MTI', 'mti', 'https://mti.hu', '', 'center-right', 'https://mti.hu/favicon-32x32.png'),
+  ('MTI', 'mti', 'https://mti.hu', '', 'center-left', 'https://mti.hu/favicon-32x32.png'),
   ('Kontroll', 'kontroll', 'https://kontroll.hu', 'https://kontroll.hu/feed.xml', 'center-left', 'https://kontroll.hu/favicon.ico'),
   ('Demokrata', 'demokrata', 'https://demokrata.hu', 'https://demokrata.hu/feed', 'right', 'https://demokrata.hu/favicon.ico')
 ON CONFLICT ("slug") DO UPDATE SET

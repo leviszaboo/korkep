@@ -54,7 +54,7 @@ export const config = {
     llmConcurrency: parseIntInRange(process.env.RECLUSTER_LLM_CONCURRENCY, 1, 1, 15),
     llmProvider: (process.env.RECLUSTER_LLM_PROVIDER ?? 'gemini-fallback') as 'openrouter' | 'gemini-fallback',
     llmModel: process.env.RECLUSTER_LLM_MODEL ?? 'google/gemma-4-31b-it',
-    postMergeThreshold: parseFloat(process.env.RECLUSTER_MERGE_THRESHOLD ?? '0.90'),
+    postMergeThreshold: parseFloat(process.env.RECLUSTER_MERGE_THRESHOLD ?? '0.97'),
     postMergeMaxSize: parseIntInRange(process.env.RECLUSTER_MERGE_MAX_SIZE, 24, 2, 100),
   },
   repair: {
