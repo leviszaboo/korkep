@@ -181,6 +181,7 @@ export async function generateStoryTitleAndSummary(
   articles: { id: number; title: string; summary: string | null }[],
   activity: LlmActivity,
   providerOverride?: ProviderConfig,
+  existingStory?: { title: string; summary: string | null } | null,
 ): Promise<StoryTitleResult | null> {
   if (articles.length === 0) return null;
   if (articles.length === 1) return null;
@@ -194,6 +195,9 @@ export async function generateStoryTitleAndSummary(
 Döntsd el, hogy VALÓBAN ugyanarról a KONKRÉT történetről/eseményről szólnak-e.
 
 FONTOS: "ugyanaz a téma" NEM jelenti, hogy "ugyanaz a történet"!
+- Az esemény/cselekvés és az arra adott reakció KÜLÖNBÖZŐ történet: pl. "Scherer Péter meghalt" vs "Scherer Péter osztálytársai reagálnak a halálhírre"
+- Egy hatósági/politikai esemény és egy arról szóló vélemény vagy kommentár KÜLÖNBÖZŐ történet: pl. "A rendőrség nyomoz a BYD-ügyben" vs "Gajdos László kifejti a véleményét a BYD-ügyről"
+- Közös politikai kontextus, szereplő vagy ügy önmagában nem elég; a KONKRÉT cselekvésnek/eseménynek/döntésnek is ugyanannak kell lennie
 - Különböző idős emberek elleni csalások = KÜLÖNBÖZŐ történetek, még ha mindegyik "idős ember + csalás"
 - Különböző celebekről szóló interjúk = KÜLÖNBÖZŐ történetek, még ha mindegyik "celeb + magánélet"
 - Különböző közlekedési balesetek = KÜLÖNBÖZŐ történetek, még ha mindegyik "baleset + autópálya"
@@ -203,6 +207,7 @@ Csak akkor koherens, ha a cikkek UGYANAZT az egy konkrét eseményt/döntést/t�
 
 Ha IGEN (koherens klaszter):
 - Írj egy semleges, de konkrét főcímet (max 15 szó)
+- Ha van meglévő story-cím és a klaszter továbbra sem igényel szétválasztást, valamint a meglévő cím pontosan és semlegesen leírja ugyanazt a konkrét történetet, válaszolj pontosan \`1\` karakterrel, semmilyen más szöveg nélkül
 - A főcím nevezze meg a központi szereplőt, ha az esemény megértéséhez fontos, akkor is, ha csak egyes források emelik ki
 - A főcím tartalmazzon konkrét cselekvést, döntést vagy eseményt, valamint a lényegi tárgyat vagy következményt
 - Kerüld a homályos ernyőcímeket, ha a konkrét történet megnevezhető: ne "Politikai vita", "Ügy fejleményei", "Közlekedési helyzet"
@@ -217,21 +222,34 @@ Ha NEM (a cikkek különböző történetekről szólnak):
 - Használd a cikkek sorszámát a csoportosításhoz
 - Ha egy cikk egyedül áll (nem tartozik másikhoz), tedd egyedül egy csoportba, pl. [[1], [2, 3]]
 
-Válaszolj KIZÁRÓLAG az alábbi JSON formátumban:
+Válaszolj KIZÁRÓLAG az alábbi formátumok egyikében:
+Meglévő cím megtartható: 1
 Koherens: {"coherent": true, "title": "Főcím", "summary": "Összefoglaló"}
 Inkoherens: {"coherent": false, "groups": [[1, 3], [2, 4]]}
 
+${existingStory ? `Meglévő story-cím, ha továbbra is pontos: ${existingStory.title}\n\n` : 'NINCS_MEGLÉVŐ_STORY_CÍM\n\n'}
 Cikkek:
 ${articleList}`;
 
   try {
-    const storySystemPrompt = 'Egy magyar hírösszefoglaló rendszer vagy. Válaszolj KIZÁRÓLAG a kért JSON formátumban, semmilyen más szöveget ne írj.';
+    const storySystemPrompt = `Egy magyar hírösszefoglaló rendszer vagy. Klaszter-koherenciát bírálsz el konkrét cselekvés/esemény/döntés alapján.
+
+Példák:
+- "Scherer Péter meghalt" és "Scherer Péter osztálytársai reagálnak a halálhírre" KÜLÖNBÖZŐ történetek.
+- "A rendőrség nyomoz a BYD-ügyben" és "Gajdos László kifejti a véleményét a BYD-ügyről" KÜLÖNBÖZŐ történetek.
+- Azonos politikai ügy, szereplő vagy tág kontextus nem elég; ugyanannak a konkrét történésnek kell lennie.
+
+Válaszolj KIZÁRÓLAG a kért formátumok egyikében, semmilyen más szöveget ne írj.`;
     const providerConfig = providerOverride ?? {
       provider: config.recluster.llmProvider,
       model: config.recluster.llmModel,
     };
 
     const raw = await callChat(providerConfig, storySystemPrompt, prompt, true, activity);
+
+    if (raw.trim() === '1' && existingStory) {
+      return { coherent: true, title: existingStory.title, summary: existingStory.summary };
+    }
 
     const jsonMatch = raw.trim().match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;

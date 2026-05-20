@@ -247,6 +247,34 @@ export async function runRecluster(activity: LlmActivity) {
     return { articleIds, sourceIds, biasGroups, firstSeenAt, relevanceScore, storyTopics, storyEntities, centroidEmbedding, clusterFingerprint, clusterArticles };
   }
 
+  function findReusableStory(articleIds: number[]): { title: string; summary: string | null } | null {
+    const articleIdSet = new Set(articleIds);
+    let best: { storyId: number; title: string; summary: string | null; overlap: number; ratio: number } | null = null;
+
+    for (const [storyId, storyArticleIds] of storyArticleMap) {
+      const story = existingStoryById.get(storyId);
+      if (!story) continue;
+
+      let overlap = 0;
+      for (const articleId of storyArticleIds) {
+        if (articleIdSet.has(articleId)) overlap += 1;
+      }
+      if (overlap === 0) continue;
+
+      const ratio = overlap / storyArticleIds.length;
+      if (
+        best == null
+        || overlap > best.overlap
+        || (overlap === best.overlap && ratio > best.ratio)
+        || (overlap === best.overlap && ratio === best.ratio && storyId < best.storyId)
+      ) {
+        best = { storyId, title: story.title, summary: story.summary, overlap, ratio };
+      }
+    }
+
+    return best ? { title: best.title, summary: best.summary } : null;
+  }
+
   const clusters: ClusterData[] = [];
   for (const [, articleIds] of clusterGroups) {
     clusters.push(buildClusterData(articleIds));
@@ -303,7 +331,8 @@ export async function runRecluster(activity: LlmActivity) {
     }
 
     if (!result) {
-      result = await generateStoryTitleAndSummary(articles, activity);
+      const reusableStory = findReusableStory(cluster.articleIds);
+      result = await generateStoryTitleAndSummary(articles, activity, undefined, reusableStory);
       if (result && !config.recluster.noCache) {
         await storeReclusterDecision({
           articleIds: cluster.articleIds,
