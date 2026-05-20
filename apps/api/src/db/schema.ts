@@ -9,6 +9,7 @@ import {
   index,
   uniqueIndex,
   customType,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -124,6 +125,24 @@ export const llmUsageLog = pgTable(
     index('idx_llm_usage_log_called_at').on(table.calledAt),
     index('idx_llm_usage_log_activity').on(table.activity),
     index('idx_llm_usage_log_mode').on(table.mode),
+  ],
+);
+
+export const reclusterDecisionCache = pgTable(
+  'recluster_decision_cache',
+  {
+    fingerprint: text('fingerprint').primaryKey(),
+    articleIds: integer('article_ids').array().notNull(),
+    coherent: boolean('coherent').notNull(),
+    title: text('title'),
+    summary: text('summary'),
+    groups: jsonb('groups').$type<number[][]>(),
+    model: text('model').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_recluster_decision_cache_last_used').on(table.lastUsedAt),
   ],
 );
 

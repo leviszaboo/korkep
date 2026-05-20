@@ -3,8 +3,12 @@ import { db, schema } from '../lib/db.js';
 import { config } from '../config.js';
 import { generateStoryTitleAndSummary, type StoryTitleResult } from '../processors/summarizer.js';
 import { mergeEntitiesFuzzy } from '../processors/clusterer.js';
-import { averageVectors, buildRecursiveMergeGroups, cosineSimilarity } from './recluster-merge.js';
-import { planStoryReconciliation } from './recluster-reconcile.js';
+import { averageVectors, buildRecursiveMergeGroups, cosineSimilarity } from './utils/recluster-merge.js';
+import { planStoryReconciliation } from './utils/recluster-reconcile.js';
+import {
+  getCachedReclusterDecision,
+  storeReclusterDecision,
+} from './utils/recluster-decision-cache.js';
 import type { LlmActivity } from '../lib/llm-usage.js';
 import { logger } from '../logger.js';
 
@@ -224,8 +228,7 @@ export async function runRecluster(activity: LlmActivity) {
     clusterArticles: typeof withEmbeddings;
   }
 
-  const clusters: ClusterData[] = [];
-  for (const [, articleIds] of clusterGroups) {
+  function buildClusterData(articleIds: number[]): ClusterData {
     const clusterArticles = articleIds.map((id) => articleMap.get(id)!);
     const sourceIds = new Set(clusterArticles.map((a) => a.sourceId));
     const biasGroups = new Set(
@@ -241,7 +244,12 @@ export async function runRecluster(activity: LlmActivity) {
     const centroidEmbedding = averageVectors(clusterArticles.map((a) => a.embedding!));
     const clusterFingerprint = articleIds.slice().sort((a, b) => a - b).join(',');
 
-    clusters.push({ articleIds, sourceIds, biasGroups, firstSeenAt, relevanceScore, storyTopics, storyEntities, centroidEmbedding, clusterFingerprint, clusterArticles });
+    return { articleIds, sourceIds, biasGroups, firstSeenAt, relevanceScore, storyTopics, storyEntities, centroidEmbedding, clusterFingerprint, clusterArticles };
+  }
+
+  const clusters: ClusterData[] = [];
+  for (const [, articleIds] of clusterGroups) {
+    clusters.push(buildClusterData(articleIds));
   }
 
   // Generate titles and summaries in parallel via OpenRouter
@@ -283,7 +291,27 @@ export async function runRecluster(activity: LlmActivity) {
     }
 
     const articles = cluster.clusterArticles.map((a) => ({ id: a.id, title: a.title, summary: a.summary }));
-    const result = await generateStoryTitleAndSummary(articles, activity);
+    let result: StoryTitleResult | null = null;
+    let resultFromCache = false;
+
+    if (!config.recluster.noCache) {
+      result = await getCachedReclusterDecision(cluster.clusterFingerprint);
+      if (result) {
+        resultFromCache = true;
+        logger.info({ articleCount: cluster.articleIds.length, coherent: result.coherent }, 'Reused cached recluster decision');
+      }
+    }
+
+    if (!result) {
+      result = await generateStoryTitleAndSummary(articles, activity);
+      if (result && !config.recluster.noCache) {
+        await storeReclusterDecision({
+          articleIds: cluster.articleIds,
+          model: config.recluster.llmModel,
+          result,
+        });
+      }
+    }
 
     if (result && !result.coherent) {
       const groupDetails = result.groups.map((ids) =>
@@ -291,7 +319,7 @@ export async function runRecluster(activity: LlmActivity) {
       );
       logger.info(
         { groups: groupDetails, articleCount: cluster.articleIds.length },
-        'LLM detected incoherent cluster, splitting',
+        resultFromCache ? 'Cached recluster decision split cluster' : 'LLM detected incoherent cluster, splitting',
       );
 
       const subStories: FinalStory[] = [];
@@ -302,41 +330,7 @@ export async function runRecluster(activity: LlmActivity) {
 
         if (groupArticles.length === 0) continue;
 
-        const subSourceIds = new Set(groupArticles.map((a) => a.sourceId));
-        const subBiasGroups = new Set(
-          [...subSourceIds].map((sid) => normalizeBiasGroup(sourceBiasMap.get(sid) ?? 'center')),
-        );
-        const subFirstSeenAt = groupArticles.reduce((earliest, a) => {
-          const ts = a.publishedAt ?? a.createdAt;
-          return ts < earliest ? ts : earliest;
-        }, groupArticles[0].publishedAt ?? groupArticles[0].createdAt);
-
-        let subTitle = groupArticles[0].title;
-        let subSummary: string | null = groupArticles[0].summary;
-        if (groupArticles.length >= 2) {
-          const subResult = await generateStoryTitleAndSummary(
-            groupArticles.map((a) => ({ id: a.id, title: a.title, summary: a.summary })),
-            activity,
-          );
-          if (subResult?.coherent) {
-            subTitle = subResult.title;
-            subSummary = subResult.summary;
-          }
-        }
-
-        subStories.push({
-          clusterKey: groupArticles.map((a) => a.id).sort((a, b) => a - b).join(','),
-          title: subTitle,
-          summary: subSummary,
-          articleIds: groupArticles.map((a) => a.id),
-          sourceIds: subSourceIds,
-          biasGroups: subBiasGroups,
-          firstSeenAt: subFirstSeenAt,
-          relevanceScore: computeRelevanceScore(subSourceIds.size, groupArticles.length, subBiasGroups.size),
-          storyTopics: aggregateTopics(groupArticles.map((a) => a.topics)),
-          storyEntities: mergeEntitiesFuzzy(groupArticles.flatMap((a) => a.entities ?? [])),
-          centroidEmbedding: averageVectors(groupArticles.map((a) => a.embedding!)),
-        });
+        subStories.push(...await processCluster(buildClusterData(groupArticles.map((a) => a.id))));
       }
 
       return subStories;
