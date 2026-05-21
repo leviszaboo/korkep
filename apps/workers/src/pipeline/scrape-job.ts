@@ -8,6 +8,7 @@ import { db, pool, schema } from '../lib/db.js';
 import { fingerprint } from '../lib/fingerprint.js';
 import { logArticleDiscards, type ArticleDiscardLogInput } from '../lib/article-discard-log.js';
 import { classifyTrashArticle, type TrashClassification } from '../lib/article-trash.js';
+import { validateImageUrl } from '../lib/image-url.js';
 import { logger } from '../logger.js';
 import { queuePush, disconnectQueue, QUEUE_PROCESS } from './queue.js';
 import { triggerNextJob } from './trigger.js';
@@ -176,6 +177,7 @@ function candidateDiscardLogInput(
     ruleId: classification.ruleId,
     confidence: classification.confidence,
     stage: 'candidate',
+    detector: 'classifier',
     publishedAt: candidate.publishedAt ?? null,
   }));
 }
@@ -195,6 +197,7 @@ function articleDiscardLogInput(
     ruleId: classification.ruleId,
     confidence: classification.confidence,
     stage: 'extracted',
+    detector: 'classifier',
     publishedAt: article.publishedAt ?? null,
   }));
 }
@@ -411,6 +414,27 @@ export async function main() {
 
           // Filter to only new articles
           const newArticles = articlesWithFp.filter((raw) => !existingFps.has(raw.fp));
+          const newArticlesWithValidatedImages = await Promise.all(
+            newArticles.map((raw) =>
+              extractLimit(async () => {
+                if (!raw.imageUrl) return raw;
+
+                const imageValidation = await validateImageUrl(raw.imageUrl, { sourceSlug: source.slug });
+                if (imageValidation.ok) return { ...raw, imageUrl: imageValidation.url };
+
+                logger.debug(
+                  {
+                    sourceSlug: source.slug,
+                    url: raw.url,
+                    imageUrl: raw.imageUrl,
+                    reason: imageValidation.reason,
+                  },
+                  'Discarding invalid article image URL',
+                );
+                return { ...raw, imageUrl: undefined };
+              }),
+            ),
+          );
 
           duplicates += articlesWithFp.length - newArticles.length;
 
@@ -433,14 +457,14 @@ export async function main() {
             return;
           }
 
-          if (newArticles.length > 0) {
+          if (newArticlesWithValidatedImages.length > 0) {
             logger.debug(
-              { sourceSlug: source.slug, count: newArticles.length },
+              { sourceSlug: source.slug, count: newArticlesWithValidatedImages.length },
               'Building insert payload',
             );
 
             // Ensure we don't pass malformed records
-            const insertPayload = newArticles.map((raw, idx) => {
+            const insertPayload = newArticlesWithValidatedImages.map((raw, idx) => {
               // Ensure publishedAt is a Date object or null, never a string
               let publishedAtValue: Date | null = null;
               if (raw.publishedAt) {

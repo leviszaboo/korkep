@@ -1,8 +1,10 @@
 import { sql, eq, desc, and, count } from 'drizzle-orm';
-import { TOPIC_WEIGHTS } from '@korkep/shared';
+import { IMAGE_EXCLUDED_SOURCE_SLUGS, TOPIC_WEIGHTS } from '@korkep/shared';
 import { db, schema } from './index.js';
 
 export type SortMode = 'relevance' | 'latest';
+
+const IMAGE_EXCLUDED_SOURCE_SQL = IMAGE_EXCLUDED_SOURCE_SLUGS.map((slug) => `'${slug}'`).join(',');
 
 export async function getStories(page: number, limit: number, topic?: string, sort: SortMode = 'relevance', since?: string) {
   const offset = (page - 1) * limit;
@@ -120,7 +122,7 @@ export async function getStories(page: number, limit: number, topic?: string, so
         JOIN sources s ON s.id = a.source_id
         WHERE a.story_id IN (${sql.raw(storyIds.join(','))})
           AND a.image_url IS NOT NULL
-          AND s.slug != '24hu'
+          AND s.slug NOT IN (${sql.raw(IMAGE_EXCLUDED_SOURCE_SQL)})
         ORDER BY a.story_id, a.published_at DESC NULLS LAST
       `),
       db.execute<{
@@ -293,7 +295,7 @@ export async function getRelatedStories(storyId: number, limit = 4) {
       s.id, s.title, s.summary, s.topics, s.article_count, s.source_count,
       s.relevance_score, s.first_seen_at::text, s.updated_at::text, s.created_at::text,
       COALESCE((SELECT MAX(a.published_at)::text FROM articles a WHERE a.story_id = s.id), s.updated_at::text) AS latest_published_at,
-      (SELECT a2.image_url FROM articles a2 JOIN sources s2 ON s2.id = a2.source_id WHERE a2.story_id = s.id AND a2.image_url IS NOT NULL AND s2.slug != '24hu' ORDER BY a2.published_at DESC NULLS LAST LIMIT 1) AS image_url,
+      (SELECT a2.image_url FROM articles a2 JOIN sources s2 ON s2.id = a2.source_id WHERE a2.story_id = s.id AND a2.image_url IS NOT NULL AND s2.slug NOT IN (${sql.raw(IMAGE_EXCLUDED_SOURCE_SQL)}) ORDER BY a2.published_at DESC NULLS LAST LIMIT 1) AS image_url,
       COALESCE((SELECT COUNT(*)::text FROM articles a JOIN sources src ON src.id = a.source_id WHERE a.story_id = s.id AND src.bias_rating IN ('left', 'center-left')), '0') AS left_count,
       COALESCE((SELECT COUNT(*)::text FROM articles a JOIN sources src ON src.id = a.source_id WHERE a.story_id = s.id AND src.bias_rating = 'center'), '0') AS center_count,
       COALESCE((SELECT COUNT(*)::text FROM articles a JOIN sources src ON src.id = a.source_id WHERE a.story_id = s.id AND src.bias_rating IN ('right', 'center-right')), '0') AS right_count
@@ -396,7 +398,7 @@ export async function searchStories(query: string) {
       st.source_count,
       st.article_count,
       MAX(a.published_at)::text AS latest_published_at,
-      (SELECT a2.image_url FROM articles a2 JOIN sources s2 ON s2.id = a2.source_id WHERE a2.story_id = a.story_id AND a2.image_url IS NOT NULL AND s2.slug != '24hu' ORDER BY a2.published_at DESC NULLS LAST LIMIT 1) AS image_url,
+      (SELECT a2.image_url FROM articles a2 JOIN sources s2 ON s2.id = a2.source_id WHERE a2.story_id = a.story_id AND a2.image_url IS NOT NULL AND s2.slug NOT IN (${sql.raw(IMAGE_EXCLUDED_SOURCE_SQL)}) ORDER BY a2.published_at DESC NULLS LAST LIMIT 1) AS image_url,
       COUNT(a.id)::text AS matched_articles,
       MAX(ts_rank(a.search_vector, plainto_tsquery('simple', ${query}))) AS relevance_score
     FROM articles a
@@ -431,7 +433,7 @@ export async function searchStories(query: string) {
         st.source_count,
         st.article_count,
         MAX(a.published_at)::text AS latest_published_at,
-        (SELECT a2.image_url FROM articles a2 JOIN sources s2 ON s2.id = a2.source_id WHERE a2.story_id = a.story_id AND a2.image_url IS NOT NULL AND s2.slug != '24hu' ORDER BY a2.published_at DESC NULLS LAST LIMIT 1) AS image_url,
+        (SELECT a2.image_url FROM articles a2 JOIN sources s2 ON s2.id = a2.source_id WHERE a2.story_id = a.story_id AND a2.image_url IS NOT NULL AND s2.slug NOT IN (${sql.raw(IMAGE_EXCLUDED_SOURCE_SQL)}) ORDER BY a2.published_at DESC NULLS LAST LIMIT 1) AS image_url,
         COUNT(a.id)::text AS matched_articles,
         1.0 AS relevance_score
       FROM articles a

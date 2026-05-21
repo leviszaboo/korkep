@@ -2,6 +2,8 @@ import { db, schema } from './db.js';
 import { logger } from '../logger.js';
 import type { TrashStage } from './article-trash.js';
 
+export type ArticleDiscardDetector = 'classifier' | 'llm';
+
 export interface ArticleDiscardLogInput {
   sourceId: number | null;
   sourceSlug: string;
@@ -12,6 +14,7 @@ export interface ArticleDiscardLogInput {
   ruleId: string;
   confidence: number;
   stage: TrashStage;
+  detector?: ArticleDiscardDetector;
   publishedAt?: Date | null;
 }
 
@@ -35,6 +38,7 @@ export async function logArticleDiscards(inputs: ArticleDiscardLogInput[]): Prom
         ruleId: input.ruleId,
         confidence: input.confidence,
         stage: input.stage,
+        detector: input.detector ?? 'classifier',
         publishedAt: input.publishedAt ?? null,
       })))
       .onConflictDoNothing({ target: schema.articleDiscardLog.url });
@@ -42,4 +46,3 @@ export async function logArticleDiscards(inputs: ArticleDiscardLogInput[]): Prom
     logger.warn({ err, count: inputs.length }, 'Failed to write article discard log');
   }
 }
-

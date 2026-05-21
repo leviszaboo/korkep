@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db, schema } from '../../lib/db.js';
 import type { StoryTitleResult } from '../summarizer.js';
 
@@ -120,4 +120,48 @@ export async function storeReclusterDecision(input: DecisionCacheRowInput): Prom
         lastUsedAt: new Date(),
       },
     });
+}
+
+export type IncoherentOverlapLookup = (articleIds: number[]) => Promise<Array<{
+  articleIds: number[];
+  groups: number[][];
+}>>;
+
+export async function hasPriorIncoherentOverlap(
+  articleIds: number[],
+  lookup: IncoherentOverlapLookup,
+): Promise<{ blocked: false } | { blocked: true; reason: string; splitGroups: number[][] }> {
+  const sortedArticleIds = articleIds.slice().sort((a, b) => a - b);
+  const rows = await lookup(sortedArticleIds);
+  const currentSet = new Set(articleIds);
+
+  for (const row of rows) {
+    if (row.groups.length < 2) continue;
+    const priorIds = row.articleIds.filter((id) => currentSet.has(id));
+    if (priorIds.length >= 2) {
+      return {
+        blocked: true,
+        reason: `prior incoherent decision split articles ${priorIds.join(',')}`,
+        splitGroups: row.groups,
+      };
+    }
+  }
+  return { blocked: false };
+}
+
+export async function getPriorIncoherentOverlaps(articleIds: number[]) {
+  const rows = await db
+    .select({
+      articleIds: schema.reclusterDecisionCache.articleIds,
+      groups: schema.reclusterDecisionCache.groups,
+    })
+    .from(schema.reclusterDecisionCache)
+    .where(sql`
+      coherent = false
+      AND article_ids && ${articleIds}::int[]
+    `);
+
+  return rows
+    .filter((row) => row.groups && row.groups.length >= 2)
+    .map((row) => ({ articleIds: row.articleIds, groups: row.groups! }));
 }

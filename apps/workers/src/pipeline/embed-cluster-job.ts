@@ -1,11 +1,11 @@
 import { eq, inArray } from 'drizzle-orm';
 import { pathToFileURL } from 'node:url';
-import { truncateForEmbedding } from '@korkep/shared';
 import { config } from '../config.js';
 import { db, pool, schema } from '../lib/db.js';
 import { buildActivity } from '../lib/llm-usage.js';
 import { getEmbeddingsBatch } from '../processors/embedder.js';
 import { assignStory } from '../processors/clusterer.js';
+import { buildClusterEmbeddingText } from '../processors/story-identity.js';
 import { logger } from '../logger.js';
 import {
   queueAck,
@@ -78,7 +78,10 @@ type EmbedArticle = {
   url: string;
 };
 
-export function buildStoryAssignmentInput(article: Pick<EmbedArticle, 'title' | 'summary'>): {
+export function buildStoryAssignmentInput(article: Pick<
+  EmbedArticle,
+  'title' | 'summary' | 'mainEvent' | 'storyIdentity' | 'articleType' | 'location' | 'entities' | 'topics'
+>): {
   storyTitle: string;
   storySummary: string | null;
   matchingText: string;
@@ -86,7 +89,7 @@ export function buildStoryAssignmentInput(article: Pick<EmbedArticle, 'title' | 
   return {
     storyTitle: article.title,
     storySummary: article.summary,
-    matchingText: article.summary ?? article.title,
+    matchingText: buildClusterEmbeddingText(article),
   };
 }
 
@@ -127,22 +130,7 @@ async function processBatch(
     return { embedded: 0, clustered: 0, errors: missing };
   }
 
-  const texts = ordered.map((article) =>
-    truncateForEmbedding({
-      title: article.title,
-      body: article.body,
-      publishedAt: article.publishedAt,
-      summary: article.summary,
-      lead: article.lead,
-      category: article.category,
-      mainEvent: article.mainEvent,
-      storyIdentity: article.storyIdentity,
-      articleType: article.articleType as any,
-      location: article.location,
-      entities: article.entities,
-      topics: article.topics,
-    }),
-  );
+  const texts = ordered.map((article) => buildClusterEmbeddingText(article));
 
   let embeddings: number[][];
   try {

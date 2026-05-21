@@ -48,6 +48,13 @@ const LOW_VALUE_CATEGORY_PATTERNS: Array<{ id: string; pattern: RegExp; weight: 
   },
 ];
 
+const STRICT_LOW_VALUE_PATTERNS: Array<{ id: string; pattern: RegExp; reason?: string }> = [
+  { id: 'quiz-content', pattern: /\b(kviz|kvizjatek|tudasproba|teszteld|tesztelje tudasat|mennyit tudsz|jol szelektalsz)\b/ },
+  { id: 'weather-filler', pattern: /\b(strandoido|fokozodik a hoseg|milyen idojaras var|megerkezik.*meleg|berobban a nyar)\b/ },
+  { id: 'soft-curiosity', pattern: /\b(albino bivaly|bogarra vadaszo rokakolyok|samu.*elefant|ave mariat|johnny depp|kozso|bochkor)\b/ },
+  { id: 'sexualized-sport-celebrity', pattern: /\b(jakabos.*bikini|szettart labakkal|aprocska bikiniben)\b/ },
+];
+
 const PUBLIC_INTEREST_PATTERNS: Array<{ id: string; pattern: RegExp }> = [
   { id: 'politics', pattern: /\b(kormany|miniszter|kepviselo|parlament|orszaggyules|fidesz|tisza|dk|momentum|part|ellenzek|polgarmester|valasztas|onkormanyzat)\b/ },
   { id: 'institutions', pattern: /\b(rendorseg|ugyeszseg|birosag|nav|mnb|allam|hatosag|korhaz|iskola|egyetem)\b/ },
@@ -66,6 +73,20 @@ export function classifyTrashArticle(input: TrashArticleInput): TrashClassificat
   const lead = normalize(input.lead ?? '');
   const body = normalize(input.body ?? '');
   const combinedPublicText = [title, category, lead, body.slice(0, 500)].join(' ');
+  const combinedLowValueText = [title, category, url].join(' ');
+
+  const strictSignals = STRICT_LOW_VALUE_PATTERNS
+    .filter((rule) => rule.pattern.test(combinedLowValueText))
+    .map((rule) => rule.id);
+  if (strictSignals.length > 0) {
+    return {
+      action: 'discard',
+      reason: 'Low-value quiz, weather filler, celebrity, or curiosity item',
+      ruleId: 'strict-low-value',
+      confidence: 0.9,
+      signals: strictSignals,
+    };
+  }
 
   const publicSignals = collectPublicInterestSignals(combinedPublicText);
   if (publicSignals.length > 0) {

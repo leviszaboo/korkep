@@ -4,7 +4,7 @@ import { db, pool, schema } from '../lib/db.js';
 import { logArticleDiscard } from '../lib/article-discard-log.js';
 import { classifyTrashArticle } from '../lib/article-trash.js';
 import { buildActivity } from '../lib/llm-usage.js';
-import { analyzeArticle } from '../processors/summarizer.js';
+import { analyzeArticleDetailed } from '../processors/summarizer.js';
 import { logger } from '../logger.js';
 import {
   queueAck,
@@ -141,9 +141,10 @@ async function processOne(
   const article = rows[0];
 
   try {
-    const analysis = await analyzeArticle(article.title, article.body, article.lead, activity);
+    const analysisResult = await analyzeArticleDetailed(article.title, article.body, article.lead, activity);
 
-    if (analysis) {
+    if (analysisResult.status === 'analyzed') {
+      const { analysis } = analysisResult;
       await db
         .update(schema.articles)
         .set({
@@ -159,6 +160,22 @@ async function processOne(
 
       logger.info({ url: article.url, articleType: analysis.articleType }, 'Article analyzed');
       return { succeeded: true, toEmbed: true };
+    } else if (analysisResult.status === 'trash') {
+      await logArticleDiscard({
+        sourceId: article.sourceId,
+        sourceSlug: article.sourceSlug,
+        url: article.url,
+        title: article.title,
+        category: article.category,
+        reason: 'LLM returned exact zero trash response',
+        ruleId: 'llm-zero-response',
+        confidence: 0.95,
+        stage: 'analysis',
+        detector: 'llm',
+        publishedAt: article.publishedAt,
+      });
+      logger.info({ url: article.url, ruleId: 'llm-zero-response' }, 'Article discarded by LLM analysis');
+      return { succeeded: false, toEmbed: false };
     } else {
       const classification = classifyTrashArticle({
         sourceSlug: article.sourceSlug,
@@ -181,12 +198,13 @@ async function processOne(
           ruleId: classification.ruleId,
           confidence: classification.confidence,
           stage: 'analysis',
+          detector: 'classifier',
           publishedAt: article.publishedAt,
         });
         logger.info({ url: article.url, ruleId: classification.ruleId }, 'Article analysis classified as trash');
       }
 
-      logger.warn({ url: article.url }, 'Article analysis returned null');
+      logger.warn({ url: article.url }, 'Article analysis failed without a trash response');
       return { succeeded: false, toEmbed: false };
     }
   } catch (err) {

@@ -70,8 +70,17 @@ const VALID_TOPICS = new Set<string>(TOPICS);
 const VALID_ARTICLE_TYPES = new Set(['event', 'aggregation', 'opinion', 'background']);
 
 export function parseAnalysisResponse(raw: string): ArticleAnalysis | null {
+  const result = parseAnalysisResult(raw);
+  return result.status === 'analyzed' ? result.analysis : null;
+}
+
+export type AnalysisParseResult =
+  | { status: 'analyzed'; analysis: ArticleAnalysis }
+  | { status: 'trash' };
+
+export function parseAnalysisResult(raw: string): AnalysisParseResult {
   if (raw.trim() === '0') {
-    return null;
+    return { status: 'trash' };
   }
 
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -97,14 +106,17 @@ export function parseAnalysisResponse(raw: string): ArticleAnalysis | null {
     : 'event';
 
   return {
-    summary: String(parsed.summary).trim(),
-    headline: String(parsed.headline).trim(),
-    mainEvent: String(parsed.mainEvent).trim(),
-    storyIdentity: parsed.storyIdentity ? String(parsed.storyIdentity).trim() : String(parsed.mainEvent).trim(),
-    articleType,
-    location: parsed.location ? String(parsed.location).trim() : null,
-    entities,
-    topics,
+    status: 'analyzed',
+    analysis: {
+      summary: String(parsed.summary).trim(),
+      headline: String(parsed.headline).trim(),
+      mainEvent: String(parsed.mainEvent).trim(),
+      storyIdentity: parsed.storyIdentity ? String(parsed.storyIdentity).trim() : String(parsed.mainEvent).trim(),
+      articleType,
+      location: parsed.location ? String(parsed.location).trim() : null,
+      entities,
+      topics,
+    },
   };
 }
 
@@ -138,6 +150,40 @@ export async function analyzeArticle(
   } catch (err) {
     logger.error({ err, title }, 'Article analysis failed');
     return null;
+  }
+}
+
+export type ArticleAnalysisResult =
+  | { status: 'analyzed'; analysis: ArticleAnalysis }
+  | { status: 'trash' }
+  | { status: 'failed' };
+
+export async function analyzeArticleDetailed(
+  title: string,
+  body: string | null,
+  lead: string | null,
+  activity: LlmActivity,
+  providerOverride?: ProviderConfig,
+): Promise<ArticleAnalysisResult> {
+  const contentLength = (lead?.length ?? 0) + (body?.length ?? 0);
+  if (contentLength < 50) {
+    logger.info({ title }, 'Article too short to analyze, skipping');
+    return { status: 'failed' };
+  }
+
+  try {
+    const userPrompt = buildUserPrompt(title, body, lead);
+    const providerConfig = providerOverride ?? {
+      provider: config.llm.provider,
+      model: config.llm.model,
+    };
+    logger.info({ title, contentLength }, 'Analyzing article via LLM');
+
+    const raw = await callChat(providerConfig, SYSTEM_PROMPT, userPrompt, true, activity);
+    return parseAnalysisResult(raw);
+  } catch (err) {
+    logger.error({ err, title }, 'Article analysis failed');
+    return { status: 'failed' };
   }
 }
 

@@ -7,9 +7,12 @@ import { averageVectors, buildRecursiveMergeGroups, cosineSimilarity } from './u
 import { planStoryReconciliation } from './utils/recluster-reconcile.js';
 import {
   getCachedReclusterDecision,
+  getPriorIncoherentOverlaps,
+  hasPriorIncoherentOverlap,
   storeReclusterDecision,
 } from './utils/recluster-decision-cache.js';
-import type { LlmActivity } from '../lib/llm-usage.js';
+import { classifyEventRole } from './story-identity.js';
+import { buildActivity, type LlmActivity, type TriggerMode } from '../lib/llm-usage.js';
 import { logger } from '../logger.js';
 
 interface ReclusterResultItem {
@@ -63,7 +66,21 @@ function arraysEqual(a: string[] | null | undefined, b: string[] | null | undefi
   return true;
 }
 
+export function shouldValidateMergedCluster(parts: Array<{ articleIds: number[]; roles: string[] }>): boolean {
+  if (parts.length <= 1) return false;
+  const allRoles = new Set(parts.flatMap((part) => part.roles));
+  if (allRoles.has('analysis') || allRoles.has('background') || allRoles.has('reaction')) return true;
+  return parts.some((part) => part.articleIds.length === 1);
+}
+
+export function postMergeValidationActivity(activity: LlmActivity): LlmActivity {
+  const trigger = activity.startsWith('manual_') ? 'manual' : 'scheduled';
+  return buildActivity(trigger as TriggerMode, 'recluster', 'storyvalidate');
+}
+
 export async function runRecluster(activity: LlmActivity) {
+  const validationActivity = postMergeValidationActivity(activity);
+
   logger.info(
     {
       seedHours: config.recluster.seedHours,
@@ -78,10 +95,13 @@ export async function runRecluster(activity: LlmActivity) {
     id: schema.articles.id,
     title: schema.articles.title,
     summary: schema.articles.summary,
+    mainEvent: schema.articles.mainEvent,
+    storyIdentity: schema.articles.storyIdentity,
     topics: schema.articles.topics,
     sourceId: schema.articles.sourceId,
     embedding: schema.articles.embedding,
     articleType: schema.articles.articleType,
+    location: schema.articles.location,
     entities: schema.articles.entities,
     publishedAt: schema.articles.publishedAt,
     createdAt: schema.articles.createdAt,
@@ -301,14 +321,6 @@ export async function runRecluster(activity: LlmActivity) {
   const finalStories: FinalStory[] = [];
 
   async function processCluster(cluster: ClusterData): Promise<FinalStory[]> {
-    if (!config.recluster.noCache) {
-      const cached = storyFingerprints.get(cluster.clusterFingerprint);
-      if (cached) {
-        logger.info({ storyTitle: cached.title, articleCount: cluster.articleIds.length }, 'Reused cached story title/summary');
-        return [{ ...cluster, clusterKey: cluster.clusterFingerprint, title: cached.title, summary: cached.summary }];
-      }
-    }
-
     if (cluster.articleIds.length < 2) {
       return [{
         ...cluster,
@@ -316,6 +328,32 @@ export async function runRecluster(activity: LlmActivity) {
         title: cluster.clusterArticles[0].title,
         summary: cluster.clusterArticles[0].summary,
       }];
+    }
+
+    const priorSplit = cluster.articleIds.length >= 3
+      ? await hasPriorIncoherentOverlap(cluster.articleIds, getPriorIncoherentOverlaps)
+      : { blocked: false as const };
+    if (priorSplit.blocked) {
+      const clusterSet = new Set(cluster.articleIds);
+      const splitArticleIds = new Set(priorSplit.splitGroups.flatMap((group) => group));
+      const groups = priorSplit.splitGroups
+        .map((groupIds) => groupIds.filter((id) => clusterSet.has(id)))
+        .filter((groupIds) => groupIds.length > 0);
+      const leftovers = cluster.articleIds.filter((id) => !splitArticleIds.has(id));
+      groups.push(...leftovers.map((id) => [id]));
+
+      logger.info({ reason: priorSplit.reason, articleIds: cluster.articleIds }, 'Prior incoherent decision blocks cluster merge');
+      return (await Promise.all(groups.map((groupIds) =>
+        processCluster(buildClusterData(groupIds)),
+      ))).flat();
+    }
+
+    if (!config.recluster.noCache) {
+      const cached = storyFingerprints.get(cluster.clusterFingerprint);
+      if (cached) {
+        logger.info({ storyTitle: cached.title, articleCount: cluster.articleIds.length }, 'Reused cached story title/summary');
+        return [{ ...cluster, clusterKey: cluster.clusterFingerprint, title: cached.title, summary: cached.summary }];
+      }
     }
 
     const articles = cluster.clusterArticles.map((a) => ({ id: a.id, title: a.title, summary: a.summary }));
@@ -496,6 +534,57 @@ export async function runRecluster(activity: LlmActivity) {
             .map((id) => articleMap.get(id)?.embedding)
             .filter((embedding): embedding is number[] => embedding != null),
         );
+        const parts = indices.map((i) => ({
+          articleIds: finalStories[i].articleIds,
+          roles: finalStories[i].articleIds
+            .map((id) => articleMap.get(id))
+            .filter((article): article is NonNullable<typeof article> => article != null)
+            .map((article) => classifyEventRole(article)),
+        }));
+
+        if (shouldValidateMergedCluster(parts)) {
+          const mergedArticlesForLlm = allArticleIds
+            .map((id) => articleMap.get(id))
+            .filter((article): article is NonNullable<typeof article> => article != null)
+            .map((article) => ({ id: article.id, title: article.title, summary: article.summary }));
+
+          logger.info(
+            { articleCount: mergedArticlesForLlm.length, activity: validationActivity },
+            'Validating post-merged cluster with LLM',
+          );
+          const validation = await generateStoryTitleAndSummary(mergedArticlesForLlm, validationActivity, undefined, null);
+          if (validation && !validation.coherent) {
+            for (const groupIds of validation.groups) {
+              const filteredGroupIds = groupIds.filter((id) => articleMap.has(id));
+              if (filteredGroupIds.length === 0) continue;
+              const groupCluster = buildClusterData(filteredGroupIds);
+              mergedStories.push({
+                ...groupCluster,
+                clusterKey: groupCluster.clusterFingerprint,
+                title: groupCluster.clusterArticles[0].title,
+                summary: groupCluster.clusterArticles[0].summary,
+              });
+            }
+            continue;
+          }
+
+          if (validation?.coherent) {
+            mergedStories.push({
+              clusterKey: allArticleIds.slice().sort((a, b) => a - b).join(','),
+              title: validation.title,
+              summary: validation.summary,
+              articleIds: allArticleIds,
+              sourceIds: allSourceIds,
+              biasGroups: allBiasGroups,
+              firstSeenAt: earliestFirst,
+              relevanceScore: computeRelevanceScore(allSourceIds.size, allArticleIds.length, allBiasGroups.size),
+              storyTopics: allTopics,
+              storyEntities: mergeEntitiesFuzzy(indices.flatMap((i) => finalStories[i].storyEntities)),
+              centroidEmbedding,
+            });
+            continue;
+          }
+        }
 
         // Use title from the largest sub-cluster
         const largestIdx = indices.reduce((best, i) =>

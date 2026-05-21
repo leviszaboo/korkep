@@ -200,6 +200,8 @@ export const EMBEDDING = {
   maxInputLength: 1024,
 } as const;
 
+export const IMAGE_EXCLUDED_SOURCE_SLUGS = ['24hu', 'hang'] as const;
+
 export const TOPICS = [
   'politika',
   'világ',

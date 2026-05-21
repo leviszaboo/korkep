@@ -159,6 +159,7 @@ export const articleDiscardLog = pgTable(
     ruleId: text('rule_id').notNull(),
     confidence: real('confidence').notNull(),
     stage: text('stage').notNull(),
+    detector: text('detector').default('classifier').notNull(),
     publishedAt: timestamp('published_at', { withTimezone: true }),
     discardedAt: timestamp('discarded_at', { withTimezone: true }).defaultNow().notNull(),
   },
@@ -167,5 +168,6 @@ export const articleDiscardLog = pgTable(
     index('idx_article_discard_log_discarded_at').on(table.discardedAt),
     index('idx_article_discard_log_source_slug').on(table.sourceSlug),
     index('idx_article_discard_log_rule_id').on(table.ruleId),
+    index('idx_article_discard_log_detector').on(table.detector),
   ],
 );

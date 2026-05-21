@@ -14,7 +14,7 @@ export type LlmStage =
   | 'resummarize'
   | 'reembed';
 
-export type LlmOperation = 'summarize' | 'embedding' | 'storytitle';
+export type LlmOperation = 'summarize' | 'embedding' | 'storytitle' | 'storyvalidate';
 
 export type LlmActivity = `${TriggerMode}_${LlmStage}_${LlmOperation}`;
 

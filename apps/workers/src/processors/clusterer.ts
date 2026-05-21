@@ -9,7 +9,9 @@ function significantTokens(text: string): Set<string> {
   return new Set(
     text
       .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s]/gu, '')
+      .normalize('NFKD')
+      .replace(/\p{M}/gu, '')
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
       .split(/\s+/)
       .filter((w) => w.length > 3),
   );
@@ -30,6 +32,36 @@ function entityOverlap(a: string[], b: string[]): number {
   for (const e of setA) if (setB.has(e)) shared++;
   const union = new Set([...setA, ...setB]).size;
   return union > 0 ? shared / union : 0;
+}
+
+export function isAssignmentCompatible(
+  incoming: { title: string; matchingText: string; entities?: string[] | null },
+  candidate: { title: string; entities?: string[] | null },
+): { compatible: boolean; reason: string } {
+  const incomingRole = incoming.matchingText.match(/^EVENT_ROLE: (.+)$/m)?.[1] ?? 'event';
+  const candidateTokens = significantTokens(candidate.title);
+  const incomingTokens = significantTokens(incoming.matchingText);
+  const overlap = tokenOverlap(incomingTokens, candidateTokens);
+  const entities = entityOverlap(incoming.entities ?? [], candidate.entities ?? []);
+  const sharedEntities = countSharedEntities(incoming.entities ?? [], candidate.entities ?? []);
+
+  if (incomingRole === 'reaction' && (overlap < 0.18 || entities < 0.34 || sharedEntities < 2)) {
+    return { compatible: false, reason: 'reaction lacks enough overlap with candidate story title/entities' };
+  }
+
+  if ((incomingRole === 'analysis' || incomingRole === 'background') && overlap < 0.28) {
+    return { compatible: false, reason: `${incomingRole} article lacks enough concrete overlap` };
+  }
+
+  return { compatible: true, reason: 'compatible' };
+}
+
+function countSharedEntities(a: string[], b: string[]): number {
+  const setA = new Set(a.map((e) => e.toLowerCase().trim()));
+  const setB = new Set(b.map((e) => e.toLowerCase().trim()));
+  let shared = 0;
+  for (const e of setA) if (setB.has(e)) shared++;
+  return shared;
 }
 
 function updateCentroid(
@@ -134,6 +166,12 @@ export async function assignStory(
 
   for (const row of rows) {
     if (row.article_count >= MAX_CLUSTER_SIZE) continue;
+
+    const compatibility = isAssignmentCompatible(
+      { title: articleTitle, matchingText, entities: newEntities },
+      { title: row.title, entities: row.entities ?? [] },
+    );
+    if (!compatibility.compatible) continue;
 
     const hoursDiff = (Date.now() - new Date(row.created_at).getTime()) / 3_600_000;
     const decayFactor = Math.exp(-hoursDiff / 24);

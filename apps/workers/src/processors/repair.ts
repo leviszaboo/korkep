@@ -1,10 +1,11 @@
-import { and, desc, eq, gt, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 import { truncateForEmbedding } from '@korkep/shared';
 import { db, schema } from '../lib/db.js';
 import { config } from '../config.js';
 import { getEmbeddingsBatch } from '../processors/embedder.js';
 import { analyzeArticle, generateStoryTitleAndSummary, type StoryTitleResult } from '../processors/summarizer.js';
 import type { LlmActivity } from '../lib/llm-usage.js';
+import { validateImageUrl, type ImageValidationResult } from '../lib/image-url.js';
 import { logger } from '../logger.js';
 
 const ANALYSIS_CONCURRENCY = config.repair.analysisConcurrency;
@@ -22,6 +23,14 @@ type RepairableArticleShape = {
 type RepairableStoryShape = {
   summary: string | null;
 };
+
+type ImageRepairCandidate = {
+  id: number;
+  imageUrl: string | null;
+  sourceSlug: string;
+};
+
+type ImageValidator = (url: string, sourceSlug: string) => Promise<ImageValidationResult>;
 
 const BROKEN_TEXT_VALUES = new Set(['n/a', 'null', 'undefined']);
 
@@ -67,6 +76,21 @@ export function storySummaryUpdateFromResult(
   const summary = result.summary?.trim();
   if (summary == null || isBrokenText(summary)) return null;
   return { title: result.title, summary };
+}
+
+export async function invalidImageArticleIds(
+  candidates: ImageRepairCandidate[],
+  validator: ImageValidator = (url, sourceSlug) => validateImageUrl(url, { sourceSlug }),
+): Promise<number[]> {
+  const invalidIds: number[] = [];
+
+  for (const candidate of candidates) {
+    if (!candidate.imageUrl) continue;
+    const result = await validator(candidate.imageUrl, candidate.sourceSlug);
+    if (!result.ok) invalidIds.push(candidate.id);
+  }
+
+  return invalidIds;
 }
 
 export async function runRepair(activity: LlmActivity) {
@@ -224,11 +248,50 @@ export async function runRepair(activity: LlmActivity) {
   }
 
   const stillMissing = needsWork.filter((a) => isBrokenText(a.summary)).length;
+  await repairArticleImages(repairWindow);
   await repairStories(activity, repairWindow);
 
   logger.info(
     { repaired: needsWork.length - stillMissing, stillMissing },
     'Repair complete',
+  );
+}
+
+async function repairArticleImages(
+  repairWindow: { oldest: Date; newest: Date },
+): Promise<void> {
+  const imageCandidates = await db
+    .select({
+      id: schema.articles.id,
+      imageUrl: schema.articles.imageUrl,
+      sourceSlug: schema.sources.slug,
+    })
+    .from(schema.articles)
+    .innerJoin(schema.sources, eq(schema.articles.sourceId, schema.sources.id))
+    .where(
+      and(
+        gt(schema.articles.createdAt, repairWindow.oldest),
+        lte(schema.articles.createdAt, repairWindow.newest),
+        isNotNull(schema.articles.imageUrl),
+      ),
+    )
+    .orderBy(desc(schema.articles.createdAt))
+    .limit(MAX_ARTICLES);
+
+  const invalidIds = await invalidImageArticleIds(imageCandidates);
+  if (invalidIds.length === 0) {
+    logger.info({ checked: imageCandidates.length }, 'Repair: article image validation pass done');
+    return;
+  }
+
+  await db
+    .update(schema.articles)
+    .set({ imageUrl: null })
+    .where(inArray(schema.articles.id, invalidIds));
+
+  logger.info(
+    { checked: imageCandidates.length, invalid: invalidIds.length },
+    'Repair: cleared invalid article image URLs',
   );
 }
 
