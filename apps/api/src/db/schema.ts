@@ -138,6 +138,8 @@ export const reclusterDecisionCache = pgTable(
     summary: text('summary'),
     groups: jsonb('groups').$type<number[][]>(),
     model: text('model').notNull(),
+    promptVersion: text('prompt_version'),
+    diagnostics: jsonb('diagnostics').$type<Record<string, unknown>>(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true }).defaultNow().notNull(),
   },

@@ -17,7 +17,7 @@ const GRACE_MINUTES = config.repair.graceMinutes;
 
 type RepairableArticleShape = {
   summary: string | null;
-  embedding: number[] | null;
+  needsEmbedding: boolean;
 };
 
 type RepairableStoryShape = {
@@ -42,7 +42,7 @@ export function isBrokenText(value: string | null | undefined): boolean {
 }
 
 export function articleNeedsRepair(article: RepairableArticleShape): boolean {
-  return isBrokenText(article.summary) || article.embedding == null;
+  return isBrokenText(article.summary) || article.needsEmbedding;
 }
 
 export function storyNeedsSummaryRepair(story: RepairableStoryShape): boolean {
@@ -110,7 +110,7 @@ export async function runRepair(activity: LlmActivity) {
       entities: schema.articles.entities,
       topics: schema.articles.topics,
       category: schema.articles.category,
-      embedding: schema.articles.embedding,
+      needsEmbedding: sql<boolean>`${schema.articles.embedding} IS NULL`,
       url: schema.articles.url,
       sourceId: schema.articles.sourceId,
       publishedAt: schema.articles.publishedAt,
@@ -137,7 +137,7 @@ export async function runRepair(activity: LlmActivity) {
   }
 
   const needsSummary = needsWork.filter((a) => isBrokenText(a.summary));
-  const needsEmbedding = needsWork.filter((a) => a.embedding == null);
+  const needsEmbedding = needsWork.filter((a) => a.needsEmbedding);
   logger.info(
     {
       lookbackHours: LOOKBACK_HOURS,
@@ -211,7 +211,7 @@ export async function runRepair(activity: LlmActivity) {
     logger.info({ completed, total: needsSummary.length }, 'Repair: summarization pass done');
   }
 
-  const toEmbed = needsWork.filter((a) => a.embedding == null && !isBrokenText(a.summary));
+  const toEmbed = needsWork.filter((a) => a.needsEmbedding && !isBrokenText(a.summary));
   if (toEmbed.length > 0) {
     for (let i = 0; i < toEmbed.length; i += EMBEDDING_BATCH_SIZE) {
       const batch = toEmbed.slice(i, i + EMBEDDING_BATCH_SIZE);

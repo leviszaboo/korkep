@@ -11,7 +11,8 @@
     "start": "node dist/pipeline/scrape-job.js",
     "scrape": "tsx src/pipeline/scrape-job.ts",
     "process": "tsx src/pipeline/process-job.ts",
-    "embed-cluster": "tsx src/pipeline/embed-cluster-job.ts"
+    "embed-cluster": "tsx src/pipeline/embed-cluster-job.ts",
+    "pipeline": "tsx src/pipeline/pipeline-job.ts"
   },
   "dependencies": {
     "@google/genai": "^2.3.0",

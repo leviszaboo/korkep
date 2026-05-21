@@ -18,7 +18,14 @@ import {
 } from './queue.js';
 import { triggerNextJob } from './trigger.js';
 
-export async function main() {
+export type ProcessStageResult = {
+  succeeded: number;
+  failed: number;
+  processed: number;
+  durationMs: number;
+};
+
+export async function runProcessStage(): Promise<ProcessStageResult> {
   const startTime = Date.now();
   const { triggerMode } = config.pipeline;
   const concurrency = config.llm.concurrency;
@@ -66,7 +73,18 @@ export async function main() {
   const durationMs = Date.now() - startTime;
   logger.info({ durationMs, succeeded: totalSucceeded, failed: totalFailed, processed: totalProcessed }, 'Process job finished');
 
-  await triggerNextJob(totalProcessed);
+  return {
+    succeeded: totalSucceeded,
+    failed: totalFailed,
+    processed: totalProcessed,
+    durationMs,
+  };
+}
+
+export async function main() {
+  const result = await runProcessStage();
+
+  await triggerNextJob(result.processed);
 
   await disconnectQueue();
   await pool.end();

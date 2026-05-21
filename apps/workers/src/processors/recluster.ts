@@ -11,6 +11,12 @@ import {
   hasPriorIncoherentOverlap,
   storeReclusterDecision,
 } from './utils/recluster-decision-cache.js';
+import {
+  clusterMetadataLooksSuspicious,
+  findEmbeddingOutliers,
+  metadataSuspicionScore,
+  type QualityArticle,
+} from './utils/cluster-quality.js';
 import { classifyEventRole } from './story-identity.js';
 import { buildActivity, type LlmActivity, type TriggerMode } from '../lib/llm-usage.js';
 import { logger } from '../logger.js';
@@ -267,6 +273,79 @@ export async function runRecluster(activity: LlmActivity) {
     return { articleIds, sourceIds, biasGroups, firstSeenAt, relevanceScore, storyTopics, storyEntities, centroidEmbedding, clusterFingerprint, clusterArticles };
   }
 
+  function toQualityArticle(article: typeof withEmbeddings[number]): QualityArticle {
+    return {
+      id: article.id,
+      title: article.title,
+      summary: article.summary,
+      mainEvent: article.mainEvent,
+      storyIdentity: article.storyIdentity,
+      articleType: article.articleType,
+      location: article.location,
+      entities: article.entities,
+      topics: article.topics,
+      embedding: article.embedding,
+    };
+  }
+
+  function coherentCacheCanBeReused(cluster: ClusterData): { allowed: boolean; reason: string } {
+    const metadata = clusterMetadataLooksSuspicious(cluster.clusterArticles.map(toQualityArticle));
+    if (metadata.suspicious) return { allowed: false, reason: metadata.reason };
+
+    const outliers = findSuspiciousOutliers(cluster);
+    if (outliers.length > 0) {
+      return { allowed: false, reason: `embedding outliers: ${outliers.map((outlier) => `#${outlier.article.id} ${outlier.reason}`).join('; ')}` };
+    }
+
+    return { allowed: true, reason: 'cache reusable' };
+  }
+
+  function findSuspiciousOutliers(cluster: ClusterData) {
+    const qualityArticles = cluster.clusterArticles.map(toQualityArticle);
+    const outliers = findEmbeddingOutliers(qualityArticles, cluster.centroidEmbedding);
+    if (outliers.length === 0) return [];
+
+    return outliers.filter((outlier) => {
+      const rest = cluster.clusterArticles.filter((article) => article.id !== outlier.article.id);
+      const restMetadata = {
+        title: rest.map((article) => article.storyIdentity ?? article.mainEvent ?? article.title).join(' '),
+        entities: mergeEntitiesFuzzy(rest.flatMap((article) => article.entities ?? [])),
+        topics: aggregateTopics(rest.map((article) => article.topics)),
+      };
+      return metadataSuspicionScore(outlier.article, restMetadata).suspicious;
+    });
+  }
+
+  function splitSuspiciousOutliers(cluster: ClusterData): { stories: FinalStory[]; groups: number[][] } | null {
+    const outliers = findSuspiciousOutliers(cluster);
+    if (outliers.length === 0) return null;
+
+    const outlierIds = new Set(outliers.map((outlier) => outlier.article.id).filter((id): id is number => id != null));
+    const mainIds = cluster.articleIds.filter((id) => !outlierIds.has(id));
+    if (mainIds.length === 0) return null;
+
+    logger.info(
+      {
+        articleIds: cluster.articleIds,
+        outliers: outliers.map((outlier) => ({ id: outlier.article.id, reason: outlier.reason })),
+      },
+      'Embedding/metadata guard split coherent cluster',
+    );
+
+    const groups = [mainIds, ...[...outlierIds].map((id) => [id])];
+    const stories = groups.map((groupIds) => {
+      const groupCluster = buildClusterData(groupIds);
+      return {
+        ...groupCluster,
+        clusterKey: groupCluster.clusterFingerprint,
+        title: groupCluster.clusterArticles[0].title,
+        summary: groupCluster.clusterArticles[0].summary,
+      };
+    });
+
+    return { stories, groups };
+  }
+
   function findReusableStory(articleIds: number[]): { title: string; summary: string | null } | null {
     const articleIdSet = new Set(articleIds);
     let best: { storyId: number; title: string; summary: string | null; overlap: number; ratio: number } | null = null;
@@ -351,8 +430,13 @@ export async function runRecluster(activity: LlmActivity) {
     if (!config.recluster.noCache) {
       const cached = storyFingerprints.get(cluster.clusterFingerprint);
       if (cached) {
-        logger.info({ storyTitle: cached.title, articleCount: cluster.articleIds.length }, 'Reused cached story title/summary');
-        return [{ ...cluster, clusterKey: cluster.clusterFingerprint, title: cached.title, summary: cached.summary }];
+        const cacheReuse = coherentCacheCanBeReused(cluster);
+        if (!cacheReuse.allowed) {
+          logger.info({ reason: cacheReuse.reason, articleIds: cluster.articleIds }, 'Bypassed cached story title/summary');
+        } else {
+          logger.info({ storyTitle: cached.title, articleCount: cluster.articleIds.length }, 'Reused cached story title/summary');
+          return [{ ...cluster, clusterKey: cluster.clusterFingerprint, title: cached.title, summary: cached.summary }];
+        }
       }
     }
 
@@ -364,18 +448,46 @@ export async function runRecluster(activity: LlmActivity) {
       result = await getCachedReclusterDecision(cluster.clusterFingerprint);
       if (result) {
         resultFromCache = true;
-        logger.info({ articleCount: cluster.articleIds.length, coherent: result.coherent }, 'Reused cached recluster decision');
+        if (result.coherent) {
+          const cacheReuse = coherentCacheCanBeReused(cluster);
+          if (!cacheReuse.allowed) {
+            logger.info({ reason: cacheReuse.reason, articleIds: cluster.articleIds }, 'Bypassed cached coherent recluster decision');
+            result = null;
+            resultFromCache = false;
+          }
+        }
+        if (result) {
+          logger.info({ articleCount: cluster.articleIds.length, coherent: result.coherent }, 'Reused cached recluster decision');
+        }
       }
     }
 
     if (!result) {
       const reusableStory = findReusableStory(cluster.articleIds);
       result = await generateStoryTitleAndSummary(articles, activity, undefined, reusableStory);
+      if (result && result.coherent) {
+        const guardedSplit = splitSuspiciousOutliers(cluster);
+        if (guardedSplit) {
+          if (!config.recluster.noCache) {
+            await storeReclusterDecision({
+              articleIds: cluster.articleIds,
+              model: config.recluster.llmModel,
+              result: { coherent: false, groups: guardedSplit.groups },
+              diagnostics: { guard: 'embedding/metadata outlier split' },
+            });
+          }
+          return guardedSplit.stories;
+        }
+      }
+
       if (result && !config.recluster.noCache) {
         await storeReclusterDecision({
           articleIds: cluster.articleIds,
           model: config.recluster.llmModel,
           result,
+          diagnostics: result.coherent
+            ? { guard: coherentCacheCanBeReused(cluster) }
+            : null,
         });
       }
     }
@@ -404,6 +516,9 @@ export async function runRecluster(activity: LlmActivity) {
     }
 
     if (result?.coherent) {
+      const guardedSplit = splitSuspiciousOutliers(cluster);
+      if (guardedSplit) return guardedSplit.stories;
+
       logger.info({ storyTitle: result.title, articleCount: cluster.articleIds.length }, 'Generated story title');
       return [{ ...cluster, clusterKey: cluster.clusterFingerprint, title: result.title, summary: result.summary }];
     }
@@ -520,6 +635,18 @@ export async function runRecluster(activity: LlmActivity) {
         // Merge all stories in this group
         const base = finalStories[indices[0]];
         const allArticleIds = indices.flatMap((i) => finalStories[i].articleIds);
+        const priorSplit = await hasPriorIncoherentOverlap(allArticleIds, getPriorIncoherentOverlaps);
+        if (priorSplit.blocked) {
+          logger.info(
+            { reason: priorSplit.reason, articleIds: allArticleIds },
+            'Prior incoherent decision blocks post-merge',
+          );
+          for (const index of indices) {
+            mergedStories.push(finalStories[index]);
+          }
+          continue;
+        }
+
         const allSourceIds = new Set(indices.flatMap((i) => [...finalStories[i].sourceIds]));
         const allBiasGroups = new Set(indices.flatMap((i) => [...finalStories[i].biasGroups]));
         const earliestFirst = indices.reduce((earliest, i) => {

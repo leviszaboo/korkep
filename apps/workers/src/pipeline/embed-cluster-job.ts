@@ -16,7 +16,15 @@ import {
   QUEUE_PROCESSING_EMBED,
 } from './queue.js';
 
-export async function main() {
+export type EmbedClusterStageResult = {
+  embedded: number;
+  clustered: number;
+  errors: number;
+  total: number;
+  durationMs: number;
+};
+
+export async function runEmbedClusterStage(): Promise<EmbedClusterStageResult> {
   const startTime = Date.now();
   const { triggerMode } = config.pipeline;
   const activity = buildActivity(triggerMode, 'embed', 'embedding');
@@ -55,6 +63,12 @@ export async function main() {
 
   const durationMs = Date.now() - startTime;
   logger.info({ durationMs, embedded, clustered, errors, total }, 'Embed+Cluster job finished');
+
+  return { embedded, clustered, errors, total, durationMs };
+}
+
+export async function main() {
+  await runEmbedClusterStage();
 
   await disconnectQueue();
   await pool.end();

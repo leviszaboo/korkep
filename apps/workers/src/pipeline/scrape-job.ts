@@ -202,7 +202,19 @@ function articleDiscardLogInput(
   }));
 }
 
-export async function main() {
+export type ScrapeStageResult = {
+  inserted: number;
+  scraped: number;
+  duplicates: number;
+  skipped: number;
+  trashDiscarded: number;
+  missingSource: number;
+  adapterErrors: number;
+  newArticleIds: number[];
+  durationMs: number;
+};
+
+export async function runScrapeStage(): Promise<ScrapeStageResult> {
   const startTime = Date.now();
   const initialMemory = process.memoryUsage();
   logger.info(
@@ -701,9 +713,25 @@ export async function main() {
     'Scrape job finished',
   );
 
+  return {
+    inserted,
+    scraped,
+    duplicates,
+    skipped,
+    trashDiscarded,
+    missingSource,
+    adapterErrors,
+    newArticleIds,
+    durationMs,
+  };
+}
+
+export async function main() {
+  const result = await runScrapeStage();
+
   try {
-    logger.debug('Triggering next job in pipeline');  
-    await triggerNextJob(newArticleIds.length);
+    logger.debug('Triggering next job in pipeline');
+    await triggerNextJob(result.newArticleIds.length);
     logger.debug('Next job triggered');
   } catch (err) {
     logger.error({ err }, 'Failed to trigger next job');

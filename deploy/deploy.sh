@@ -41,7 +41,7 @@ resolve_env_file() {
 target_type() {
   case "$1" in
     api|batch-clusterer) echo "service" ;;
-    migrate|scrape|process|embed-cluster|recluster|reembed|resummarize|repair) echo "job" ;;
+    migrate|pipeline|scrape|process|embed-cluster|recluster|reembed|resummarize|repair) echo "job" ;;
     *) echo "Unknown target: $1" >&2; return 2 ;;
   esac
 }
@@ -51,7 +51,7 @@ target_image() {
     api) echo "api" ;;
     batch-clusterer) echo "batch-clusterer" ;;
     migrate) echo "api" ;;
-    scrape|process|embed-cluster|recluster|reembed|resummarize|repair) echo "workers" ;;
+    pipeline|scrape|process|embed-cluster|recluster|reembed|resummarize|repair) echo "workers" ;;
     *) echo "Unknown target: $1" >&2; return 2 ;;
   esac
 }
@@ -59,6 +59,7 @@ target_image() {
 job_command() {
   case "$1" in
     migrate) echo "dist/db/migrate.js" ;;
+    pipeline) echo "dist/pipeline/pipeline-job.js" ;;
     scrape) echo "dist/pipeline/scrape-job.js" ;;
     process) echo "dist/pipeline/process-job.js" ;;
     embed-cluster) echo "dist/pipeline/embed-cluster-job.js" ;;
@@ -113,7 +114,7 @@ full_deploy_plan() {
   printf 'deploy_service_target batch-clusterer %s\n' "$tag"
   printf 'deploy_service_target api %s\n' "$tag"
   local job
-  for job in migrate scrape process embed-cluster recluster reembed resummarize repair; do
+  for job in migrate pipeline scrape process embed-cluster recluster reembed resummarize repair; do
     printf 'deploy_job_target %s %s\n' "$job" "$tag"
   done
   [[ "$run_migrate" == "1" ]] && printf 'execute_job migrate\n'
@@ -167,7 +168,7 @@ Diagnostics options:
   --llm-lookback-days <days>  Override LLM usage graph/table lookback window
 
 Targets:
-  api batch-clusterer migrate scrape process embed-cluster recluster reembed resummarize repair
+  api batch-clusterer migrate pipeline scrape process embed-cluster recluster reembed resummarize repair
 EOF
 }
 
@@ -378,7 +379,7 @@ worker_secrets() {
 job_secrets() {
   case "$1" in
     migrate) echo "DATABASE_URL=database-url:latest" ;;
-    scrape|process|embed-cluster) echo "$(worker_secrets),REDIS_URL=upstash-redis-url:latest" ;;
+    pipeline|scrape|process|embed-cluster) echo "$(worker_secrets),REDIS_URL=upstash-redis-url:latest" ;;
     recluster|reembed|resummarize|repair) worker_secrets ;;
     *) echo "Unknown job: $1" >&2; return 2 ;;
   esac
@@ -394,6 +395,7 @@ job_env_vars() {
   local clusterer_url="${2:-}"
   case "$job" in
     migrate) echo "" ;;
+    pipeline) echo "SCRAPE_CONCURRENCY=${SCRAPE_CONCURRENCY},SCRAPE_EXTRACT_CONCURRENCY=${SCRAPE_EXTRACT_CONCURRENCY},LLM_CONCURRENCY=${LLM_CONCURRENCY},LLM_PROVIDER=${LLM_PROVIDER},LLM_MODEL=${LLM_MODEL},$(cluster_env "$clusterer_url"),EMBEDDING_CONCURRENCY=${EMBEDDING_CONCURRENCY},EMBEDDING_MODEL=${EMBEDDING_MODEL},STORY_ASSIGN_CONCURRENCY=${STORY_ASSIGN_CONCURRENCY:-2},STORY_ASSIGN_LOOKBACK_HOURS=${STORY_ASSIGN_LOOKBACK_HOURS:-24},TRIGGER_MODE=scheduled,NEXT_JOB=" ;;
     scrape) echo "SCRAPE_CONCURRENCY=${SCRAPE_CONCURRENCY},SCRAPE_EXTRACT_CONCURRENCY=${SCRAPE_EXTRACT_CONCURRENCY},NEXT_JOB=process,TRIGGER_MODE=scheduled" ;;
     process) echo "LLM_CONCURRENCY=${LLM_CONCURRENCY},LLM_PROVIDER=${LLM_PROVIDER},LLM_MODEL=${LLM_MODEL},NEXT_JOB=embed-cluster,TRIGGER_MODE=scheduled" ;;
     embed-cluster) echo "$(cluster_env "$clusterer_url"),EMBEDDING_CONCURRENCY=${EMBEDDING_CONCURRENCY},EMBEDDING_MODEL=${EMBEDDING_MODEL},STORY_ASSIGN_CONCURRENCY=${STORY_ASSIGN_CONCURRENCY:-2},STORY_ASSIGN_LOOKBACK_HOURS=${STORY_ASSIGN_LOOKBACK_HOURS:-24},TRIGGER_MODE=scheduled" ;;
@@ -422,6 +424,7 @@ job_cpu() {
 job_timeout() {
   case "$1" in
     migrate) echo "120" ;;
+    pipeline) echo "${PIPELINE_TIMEOUT_SECONDS:-1800}" ;;
     scrape|embed-cluster|recluster|repair) echo "600" ;;
     process) echo "1200" ;;
     reembed|resummarize) echo "3600" ;;
@@ -431,7 +434,7 @@ job_timeout() {
 
 needs_clusterer_url() {
   case "$1" in
-    embed-cluster|recluster) return 0 ;;
+    pipeline|embed-cluster|recluster) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -543,7 +546,7 @@ action_full() {
   echo "  api: ${api_url}"
 
   local job
-  for job in migrate scrape process embed-cluster recluster reembed resummarize repair; do
+  for job in migrate pipeline scrape process embed-cluster recluster reembed resummarize repair; do
     deploy_job_target "$job" "$TAG"
   done
 
@@ -574,7 +577,7 @@ action_trigger() {
   load_env
   require_cmd gcloud
   case "$job" in
-    scrape|process|embed-cluster|recluster|reembed|resummarize|repair|migrate) ;;
+    pipeline|scrape|process|embed-cluster|recluster|reembed|resummarize|repair|migrate) ;;
     *) echo "Unknown job: ${job}" >&2; return 2 ;;
   esac
 
@@ -606,8 +609,8 @@ deploy_schedules() {
   JOBS_API="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs"
 
   delete_schedule_if_exists "repair-trigger"
-  create_or_update_schedule "scrape-trigger" "$SCRAPE_DAY_SCHEDULE" "scrape"
-  create_or_update_schedule "scrape-night-trigger" "$SCRAPE_NIGHT_SCHEDULE" "scrape"
+  create_or_update_schedule "scrape-trigger" "$SCRAPE_DAY_SCHEDULE" "pipeline"
+  create_or_update_schedule "scrape-night-trigger" "$SCRAPE_NIGHT_SCHEDULE" "pipeline"
   create_or_update_schedule "recluster-trigger" "$RECLUSTER_SCHEDULE" "recluster"
 }
 
@@ -652,7 +655,8 @@ print_deploy_summary() {
   echo "  Batch Clusterer: ${clusterer_url} (internal)"
   echo ""
   echo "Pipeline jobs:"
-  echo "  scrape -> process -> embed-cluster"
+  echo "  scheduled:       pipeline (scrape -> process -> embed-cluster in one container)"
+  echo "  manual/debug:    scrape -> process -> embed-cluster"
   echo ""
   echo "Manual jobs:"
   echo "  ./deploy/deploy.sh trigger scrape"
@@ -787,14 +791,15 @@ action_diagnostics() {
   DEPLOY_ENV_FILE="$ENV_FILE" "${SCRIPT_DIR}/cloud-diagnostics.sh" "$@"
 }
 
-TARGETS=(api batch-clusterer migrate scrape process embed-cluster recluster reembed resummarize repair)
-JOBS=(migrate scrape process embed-cluster recluster reembed resummarize repair)
+TARGETS=(api batch-clusterer migrate pipeline scrape process embed-cluster recluster reembed resummarize repair)
+JOBS=(migrate pipeline scrape process embed-cluster recluster reembed resummarize repair)
 
 choose_target() {
   gum choose --header "Target" \
     "api              Cloud Run API service" \
     "batch-clusterer  internal HDBSCAN service" \
     "migrate          database migrations job" \
+    "pipeline         combined scheduled scrape/process/embed job" \
     "scrape           fetch sources and enqueue processing" \
     "process          LLM article analysis" \
     "embed-cluster    embedding and story assignment" \

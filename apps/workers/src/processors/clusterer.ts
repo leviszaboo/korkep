@@ -2,36 +2,18 @@ import { sql, eq } from 'drizzle-orm';
 import { db, schema } from '../lib/db.js';
 import { config } from '../config.js';
 import { CLUSTERING } from '@korkep/shared';
+import {
+  countSharedEntities,
+  entityOverlap as computeEntityOverlap,
+  shouldAllowHighSimilarityAssignment,
+  significantTokens,
+  tokenOverlap,
+} from './utils/cluster-quality.js';
 
 const MAX_CLUSTER_SIZE = CLUSTERING.maxClusterSize;
 
-function significantTokens(text: string): Set<string> {
-  return new Set(
-    text
-      .toLowerCase()
-      .normalize('NFKD')
-      .replace(/\p{M}/gu, '')
-      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-      .split(/\s+/)
-      .filter((w) => w.length > 3),
-  );
-}
-
-function tokenOverlap(a: Set<string>, b: Set<string>): number {
-  let shared = 0;
-  for (const t of a) if (b.has(t)) shared++;
-  const union = new Set([...a, ...b]).size;
-  return union > 0 ? shared / union : 0;
-}
-
 function entityOverlap(a: string[], b: string[]): number {
-  if (a.length === 0 || b.length === 0) return 0;
-  const setA = new Set(a.map((e) => e.toLowerCase()));
-  const setB = new Set(b.map((e) => e.toLowerCase()));
-  let shared = 0;
-  for (const e of setA) if (setB.has(e)) shared++;
-  const union = new Set([...setA, ...setB]).size;
-  return union > 0 ? shared / union : 0;
+  return computeEntityOverlap(a, b);
 }
 
 export function isAssignmentCompatible(
@@ -54,14 +36,6 @@ export function isAssignmentCompatible(
   }
 
   return { compatible: true, reason: 'compatible' };
-}
-
-function countSharedEntities(a: string[], b: string[]): number {
-  const setA = new Set(a.map((e) => e.toLowerCase().trim()));
-  const setB = new Set(b.map((e) => e.toLowerCase().trim()));
-  let shared = 0;
-  for (const e of setA) if (setB.has(e)) shared++;
-  return shared;
 }
 
 function updateCentroid(
@@ -140,14 +114,12 @@ export async function assignStory(
     title: string;
     article_count: number;
     source_count: number;
-    centroid_embedding: string | null;
     entities: string[] | null;
     created_at: string;
     similarity: number;
   }>(sql`
     SELECT
-      id, title, article_count, source_count,
-      centroid_embedding::text, entities, created_at,
+      id, title, article_count, source_count, entities, created_at,
       1 - (centroid_embedding <=> ${vectorLiteral}::vector) AS similarity
     FROM stories
     WHERE centroid_embedding IS NOT NULL
@@ -160,6 +132,7 @@ export async function assignStory(
   const rows = candidates.rows ?? [];
   const newTokens = significantTokens(matchingText);
   const newEntities = articleEntities ?? [];
+  const incomingRole = matchingText.match(/^EVENT_ROLE: (.+)$/m)?.[1] ?? 'event';
 
   let bestStoryId: number | null = null;
   let bestScore = 0;
@@ -190,10 +163,20 @@ export async function assignStory(
       tokOverlap * CLUSTERING.tokenOverlapWeight;
 
     // Adaptive threshold: larger clusters require stronger matches
-    const sizePenalty = (row.article_count / MAX_CLUSTER_SIZE) * 0.05;
+    const sizePenalty = row.similarity >= 0.90 ? 0 : (row.article_count / MAX_CLUSTER_SIZE) * 0.05;
     const effectiveThreshold = CLUSTERING.similarityThreshold + sizePenalty;
 
-    if (combinedScore < effectiveThreshold) continue;
+    if (combinedScore < effectiveThreshold) {
+      const rescueAllowed = shouldAllowHighSimilarityAssignment({
+        rawSimilarity: row.similarity,
+        articleCount: row.article_count,
+        articleType: incomingRole,
+        entityScore: entOverlap,
+        tokenScore: tokOverlap,
+        sharedEntities: countSharedEntities(newEntities, storyEntities),
+      });
+      if (!rescueAllowed) continue;
+    }
 
     // Coherence check: raw semantic similarity to centroid must stay above floor
     if (row.similarity < CLUSTERING.minCoherenceSimilarity) continue;

@@ -30,6 +30,145 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 }
 
 // ---------------------------------------------------------------------------
+// Error normalization
+// ---------------------------------------------------------------------------
+
+type NormalizedLlmError = {
+  provider: 'openrouter' | 'gemini';
+  name?: string;
+  message: string;
+  code?: string | number;
+  statusCode?: number;
+  model?: string;
+};
+
+class LlmProviderError extends Error {
+  readonly provider: NormalizedLlmError['provider'];
+  readonly code?: string | number;
+  readonly statusCode?: number;
+  readonly model?: string;
+
+  constructor(error: NormalizedLlmError) {
+    super(error.message);
+    this.name = 'LlmProviderError';
+    this.provider = error.provider;
+    this.code = error.code;
+    this.statusCode = error.statusCode;
+    this.model = error.model;
+  }
+}
+
+function parseJsonObject(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  if (typeof value !== 'string') return null;
+
+  try {
+    const parsed = JSON.parse(value.trim());
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // ignore parse failure
+  }
+
+  return null;
+}
+
+function getNestedError(value: unknown): Record<string, unknown> | null {
+  const obj = parseJsonObject(value);
+  if (!obj) return null;
+
+  const nested = obj.error;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    return nested as Record<string, unknown>;
+  }
+
+  return null;
+}
+
+function summarizeOpenRouterError(err: unknown, model?: string): NormalizedLlmError {
+  if (!(err instanceof Error)) {
+    return {
+      provider: 'openrouter',
+      message: String(err),
+      model,
+    };
+  }
+
+  const anyErr = err as {
+    rawValue?: unknown;
+    statusCode?: number;
+    body?: unknown;
+    name?: string;
+    message?: string;
+  };
+
+  const rawError = getNestedError(anyErr.rawValue);
+  if (rawError) {
+    return {
+      provider: 'openrouter',
+      name: err.name,
+      message: typeof rawError.message === 'string' ? rawError.message : err.message,
+      code: typeof rawError.code === 'string' || typeof rawError.code === 'number' ? rawError.code : undefined,
+      statusCode: anyErr.statusCode,
+      model,
+    };
+  }
+
+  const bodyError = getNestedError(anyErr.body);
+  if (bodyError) {
+    return {
+      provider: 'openrouter',
+      name: err.name,
+      message: typeof bodyError.message === 'string' ? bodyError.message : err.message,
+      code: typeof bodyError.code === 'string' || typeof bodyError.code === 'number' ? bodyError.code : undefined,
+      statusCode: anyErr.statusCode,
+      model,
+    };
+  }
+
+  return {
+    provider: 'openrouter',
+    name: err.name,
+    message: err.message,
+    statusCode: anyErr.statusCode,
+    model,
+  };
+}
+
+function summarizeGeminiError(err: unknown): NormalizedLlmError {
+  if (!(err instanceof Error)) {
+    return {
+      provider: 'gemini',
+      message: String(err),
+      model: config.googleAiStudio.model,
+    };
+  }
+
+  const anyErr = err as {
+    status?: number;
+    statusCode?: number;
+    code?: string | number;
+  };
+
+  return {
+    provider: 'gemini',
+    name: err.name,
+    message: err.message,
+    code: anyErr.code,
+    statusCode: anyErr.statusCode ?? anyErr.status,
+    model: config.googleAiStudio.model,
+  };
+}
+
+function toProviderError(error: NormalizedLlmError): LlmProviderError {
+  return new LlmProviderError(error);
+}
+
+// ---------------------------------------------------------------------------
 // Rate limiter for Google AI Studio (15 req/min, 1500 req/day free tier)
 // Always uses Redis (Upstash in cloud, Docker Redis locally).
 // ---------------------------------------------------------------------------
@@ -43,7 +182,10 @@ let redisAvailable: boolean | null = null;
 async function tryGetRedis(): Promise<Redis | null> {
   if (redisAvailable === false) return null;
   if (redisInstance) return redisInstance;
-  if (!config.redis.url) { redisAvailable = false; return null; }
+  if (!config.redis.url) {
+    redisAvailable = false;
+    return null;
+  }
 
   try {
     const r = new Redis(config.redis.url, {
@@ -82,7 +224,9 @@ async function acquireRateSlotMemory(): Promise<'ok' | 'daily_exhausted'> {
     const waitMs = Math.max((memTimestamps[0] + 60 - now) * 1000, 1000);
     logger.info({ waitMs, currentCount: memTimestamps.length }, 'Gemini rate limit reached, waiting');
     await new Promise((resolve) => setTimeout(resolve, waitMs));
-    while (memTimestamps.length > 0 && memTimestamps[0] <= Math.floor(Date.now() / 1000) - 60) memTimestamps.shift();
+    while (memTimestamps.length > 0 && memTimestamps[0] <= Math.floor(Date.now() / 1000) - 60) {
+      memTimestamps.shift();
+    }
   }
 
   memTimestamps.push(Math.floor(Date.now() / 1000));
@@ -168,7 +312,7 @@ export async function callGemini(
 ): Promise<string> {
   if (!gemini) throw new Error('Gemini client not configured');
 
-  let lastError: unknown;
+  let lastError: NormalizedLlmError | null = null;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     if (attempt > 0) {
@@ -176,16 +320,20 @@ export async function callGemini(
     }
 
     try {
-      const response = await withTimeout(gemini.models.generateContent({
-        model: config.googleAiStudio.model,
-        contents: userPrompt,
-        config: {
-          systemInstruction: systemPrompt,
-          temperature: 0.3,
-          maxOutputTokens: 500,
-          ...(jsonMode && { responseMimeType: 'application/json' }),
-        },
-      }), config.llm.requestTimeoutMs, 'Gemini generateContent');
+      const response = await withTimeout(
+        gemini.models.generateContent({
+          model: config.googleAiStudio.model,
+          contents: userPrompt,
+          config: {
+            systemInstruction: systemPrompt,
+            temperature: 0.3,
+            maxOutputTokens: 500,
+            ...(jsonMode && { responseMimeType: 'application/json' }),
+          },
+        }),
+        config.llm.requestTimeoutMs,
+        'Gemini generateContent',
+      );
 
       const content = response.text;
       if (!content) throw new Error('Empty response from Gemini API');
@@ -210,12 +358,22 @@ export async function callGemini(
 
       return content;
     } catch (err) {
-      lastError = err;
-      logger.warn({ err, attempt: attempt + 1 }, 'Gemini call failed, retrying');
+      const error = summarizeGeminiError(err);
+      lastError = error;
+
+      if (attempt < MAX_RETRIES) {
+        logger.warn({ error, attempt: attempt + 1 }, 'Gemini call failed, retrying');
+      } else {
+        logger.error({ error, attempt: attempt + 1 }, 'Gemini call failed permanently');
+      }
     }
   }
 
-  throw lastError;
+  throw toProviderError(lastError ?? {
+    provider: 'gemini',
+    message: 'Gemini call failed',
+    model: config.googleAiStudio.model,
+  });
 }
 
 export async function callOpenRouterChat(
@@ -226,7 +384,7 @@ export async function callOpenRouterChat(
   activity: LlmActivity,
   mode: LlmMode = 'openrouter',
 ): Promise<string> {
-  let lastError: unknown;
+  let lastError: NormalizedLlmError | null = null;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     if (attempt > 0) {
@@ -234,18 +392,22 @@ export async function callOpenRouterChat(
     }
 
     try {
-      const response = await withTimeout(openrouter.chat.send({
-        chatRequest: {
-          model,
-          messages: [
-            { role: 'system' as const, content: systemPrompt },
-            { role: 'user' as const, content: userPrompt },
-          ],
-          temperature: 0.3,
-          maxTokens: 500,
-          ...(jsonMode && { responseFormat: { type: 'json_object' as const } }),
-        },
-      }), config.llm.requestTimeoutMs, 'OpenRouter chat');
+      const response = await withTimeout(
+        openrouter.chat.send({
+          chatRequest: {
+            model,
+            messages: [
+              { role: 'system' as const, content: systemPrompt },
+              { role: 'user' as const, content: userPrompt },
+            ],
+            temperature: 0.3,
+            maxTokens: 500,
+            ...(jsonMode && { responseFormat: { type: 'json_object' as const } }),
+          },
+        }),
+        config.llm.requestTimeoutMs,
+        'OpenRouter chat',
+      );
 
       const content = response.choices?.[0]?.message?.content;
       if (!content || typeof content !== 'string') {
@@ -272,12 +434,22 @@ export async function callOpenRouterChat(
 
       return content;
     } catch (err) {
-      lastError = err;
-      logger.warn({ err, attempt: attempt + 1 }, 'OpenRouter call failed, retrying');
+      const error = summarizeOpenRouterError(err, model);
+      lastError = error;
+
+      if (attempt < MAX_RETRIES) {
+        logger.warn({ error, attempt: attempt + 1 }, 'OpenRouter call failed, retrying');
+      } else {
+        logger.error({ error, attempt: attempt + 1 }, 'OpenRouter call failed permanently');
+      }
     }
   }
 
-  throw lastError;
+  throw toProviderError(lastError ?? {
+    provider: 'openrouter',
+    message: 'OpenRouter call failed',
+    model,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -300,9 +472,25 @@ export async function callChat(
     const slot = await acquireRateSlot();
     if (slot === 'ok') {
       try {
-        return await callGemini(systemPrompt, userPrompt, jsonMode, activity, normalizeLlmMode(providerConfig.provider));
+        return await callGemini(
+          systemPrompt,
+          userPrompt,
+          jsonMode,
+          activity,
+          normalizeLlmMode(providerConfig.provider),
+        );
       } catch (err) {
-        logger.warn({ err }, 'Gemini failed after retries, falling back to OpenRouter');
+        const error = err instanceof LlmProviderError
+          ? {
+              provider: err.provider,
+              message: err.message,
+              code: err.code,
+              statusCode: err.statusCode,
+              model: err.model,
+            }
+          : summarizeGeminiError(err);
+
+        logger.warn({ error }, 'Gemini failed after retries, falling back to OpenRouter');
       }
     } else {
       logger.info('Gemini daily limit exhausted, falling back to OpenRouter');

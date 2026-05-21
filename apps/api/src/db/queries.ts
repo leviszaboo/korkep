@@ -6,6 +6,21 @@ export type SortMode = 'relevance' | 'latest';
 
 const IMAGE_EXCLUDED_SOURCE_SQL = IMAGE_EXCLUDED_SOURCE_SLUGS.map((slug) => `'${slug}'`).join(',');
 
+const storyPublicColumns = {
+  id: schema.stories.id,
+  title: schema.stories.title,
+  summary: schema.stories.summary,
+  topic: schema.stories.topic,
+  topics: schema.stories.topics,
+  articleCount: schema.stories.articleCount,
+  sourceCount: schema.stories.sourceCount,
+  relevanceScore: schema.stories.relevanceScore,
+  entities: schema.stories.entities,
+  firstSeenAt: schema.stories.firstSeenAt,
+  updatedAt: schema.stories.updatedAt,
+  createdAt: schema.stories.createdAt,
+};
+
 export async function getStories(page: number, limit: number, topic?: string, sort: SortMode = 'relevance', since?: string) {
   const offset = (page - 1) * limit;
 
@@ -60,7 +75,7 @@ export async function getStories(page: number, limit: number, topic?: string, so
 
   const [storiesResult, totalResult] = await Promise.all([
     db
-      .select()
+      .select(storyPublicColumns)
       .from(schema.stories)
       .where(where)
       .orderBy(orderBy)
@@ -82,7 +97,7 @@ export async function getStories(page: number, limit: number, topic?: string, so
     const todayIds = new Set(storiesResult.map((s) => s.id));
 
     const backfillResult = await db
-      .select()
+      .select(storyPublicColumns)
       .from(schema.stories)
       .where(backfillWhere)
       .orderBy(orderBy)
@@ -189,7 +204,7 @@ export async function getStories(page: number, limit: number, topic?: string, so
 
 export async function getStoryById(id: number) {
   const [story] = await db
-    .select()
+    .select(storyPublicColumns)
     .from(schema.stories)
     .where(eq(schema.stories.id, id))
     .limit(1);

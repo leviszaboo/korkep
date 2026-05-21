@@ -173,6 +173,37 @@ Run diagnostics for resource sizing, free-tier projections, and Postgres/LLM usa
 ./deploy/deploy.sh diagnostics
 ```
 
+### Scheduled Diagnostics Via GitHub Actions
+
+The `Collect diagnostics` workflow runs hourly and writes diagnostics into the `diagnostics` schema of the configured Neon Postgres database. This avoids Cloud Scheduler and does not require a public VM or service endpoint. LLM usage stays in the existing `llm_usage_log` table; the workflow does not duplicate it into diagnostics tables.
+
+Create these GitHub Actions secrets:
+
+- `DATABASE_URL`
+- `GCP_PROJECT_ID`
+- `GCP_REGION`
+- `GCP_SERVICE_ACCOUNT_KEY`
+- `NEON_API_KEY`
+- `NEON_PROJECT_ID`
+
+Optional secrets:
+
+- `NEON_ORG_ID`
+- `NEON_PROJECT_IDS`
+- `NEON_BRANCH_IDS`
+
+Optional repository variable:
+
+- `CLOUD_RUN_LOG_LIMIT`, default `20000`
+
+The GCP service account in `GCP_SERVICE_ACCOUNT_KEY` needs read access for Cloud Run and Cloud Logging, for example `roles/run.viewer` and `roles/logging.viewer`.
+
+Run manually:
+
+```bash
+gh workflow run diagnostics.yml -f lookback_hours=24
+```
+
 ### Local Development
 
 ```bash
@@ -211,6 +242,17 @@ Wipes all embeddings and story assignments, then re-analyzes and re-embeds every
 docker compose up -d postgres
 docker compose --profile reembed run --rm reembed
 ```
+
+### Strict story identity re-embedding
+
+After changing clustering text, re-embed recent articles before judging cluster quality:
+
+```bash
+SINCE_HOURS=16 docker compose --profile reembed run --rm reembed
+docker compose run --rm pipeline node dist/processors/recluster.js
+```
+
+Start with 16 hours. Compare known regression clusters before widening the window.
 
 ### Resummarize (regenerate LLM analysis)
 
